@@ -1,10 +1,12 @@
 """Punto de entrada de la API FastAPI (app factory)."""
 
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from slowapi.errors import RateLimitExceeded
 
 from app.api.v1.router import api_router
+from app.core.config import settings
 from app.core.limiter import limiter
 
 
@@ -21,6 +23,15 @@ def create_app() -> FastAPI:
         title="E-commerce API",
         description="API REST del e-commerce de productos de belleza (MVP).",
         version="0.1.0",
+    )
+
+    # CORS: permite que el frontend web consuma la API.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
     )
 
     # Rate limiting (slowapi): patrón decorador + handler de excepción.
