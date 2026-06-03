@@ -33,7 +33,7 @@ tests/             # pruebas unitarias e integración (pytest)
 # 1. Crear entorno e instalar dependencias
 python -m venv .venv
 .venv\Scripts\activate        # Windows
-pip install -e ".[dev]"
+pip install -e ".[dev,postgres]"   # 'postgres' instala el driver psycopg para PostgreSQL
 
 # 2. Configurar variables de entorno
 copy .env.example .env        # Windows
