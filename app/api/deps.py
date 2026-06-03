@@ -6,10 +6,15 @@ from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 
 from app.application.services.auth_service import AuthService
+from app.application.services.product_service import ProductService
 from app.core.database import get_db
 from app.core.security import decode_token
 from app.domain.entities.user import Role, User
+from app.domain.repositories.product_repository import ProductRepository
 from app.domain.repositories.user_repository import UserRepository
+from app.infrastructure.repositories.sqlalchemy_product_repository import (
+    SqlAlchemyProductRepository,
+)
 from app.infrastructure.repositories.sqlalchemy_user_repository import SqlAlchemyUserRepository
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/v1/auth/login")
@@ -27,6 +32,16 @@ def get_user_repository(db: Session = Depends(get_db)) -> UserRepository:
 
 def get_auth_service(repo: UserRepository = Depends(get_user_repository)) -> AuthService:
     return AuthService(repo)
+
+
+def get_product_repository(db: Session = Depends(get_db)) -> ProductRepository:
+    return SqlAlchemyProductRepository(db)
+
+
+def get_product_service(
+    repo: ProductRepository = Depends(get_product_repository),
+) -> ProductService:
+    return ProductService(repo)
 
 
 def get_current_user(
