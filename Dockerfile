@@ -7,7 +7,7 @@ WORKDIR /code
 
 # Dependencias
 COPY pyproject.toml ./
-RUN pip install --no-cache-dir --upgrade pip && pip install --no-cache-dir .
+RUN pip install --no-cache-dir --upgrade pip && pip install --no-cache-dir ".[postgres]"
 
 # Código
 COPY app ./app

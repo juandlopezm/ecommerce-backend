@@ -10,16 +10,18 @@ dependencies = [
     "alembic>=1.13",
     "pydantic>=2.7",
     "pydantic-settings>=2.3",
-    "passlib[bcrypt]>=1.7.4",
     "bcrypt>=4.1",
-    "python-jose[cryptography]>=3.3",
+    "pyjwt>=2.8",
     "python-multipart>=0.0.9",
-    "psycopg[binary]>=3.1",
     "slowapi>=0.1.9",
     "email-validator>=2.1",
 ]
 
 [project.optional-dependencies]
+# Driver de PostgreSQL (runtime de desarrollo/producción). Las pruebas usan SQLite y no lo requieren.
+postgres = [
+    "psycopg[binary]>=3.1",
+]
 dev = [
     "pytest>=8.2",
     "pytest-cov>=5.0",
@@ -42,6 +44,10 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.flake8-bugbear]
+# `Depends()` en valores por defecto es el patrón idiomático de FastAPI (no es un bug B008).
+extend-immutable-calls = ["fastapi.Depends", "fastapi.params.Depends"]
 
 [tool.black]
 line-length = 100
