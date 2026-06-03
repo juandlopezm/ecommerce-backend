@@ -11,3 +11,7 @@ class EmailAlreadyExistsError(ApplicationError):
 
 class InvalidCredentialsError(ApplicationError):
     """Credenciales inválidas al iniciar sesión (HU-12)."""
+
+
+class ProductNotFoundError(ApplicationError):
+    """No se encontró el producto solicitado."""

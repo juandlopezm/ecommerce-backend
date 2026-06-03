@@ -9,6 +9,7 @@ from app.core.config import settings
 from app.core.database import Base
 
 # Importa los modelos para que Alembic detecte su metadata (autogenerate).
+from app.infrastructure.models.product_model import ProductModel  # noqa: F401
 from app.infrastructure.models.user_model import UserModel  # noqa: F401
 
 config = context.config

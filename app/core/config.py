@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./ecommerce.db"
 
     # Seguridad / JWT
-    jwt_secret: str = "dev-secret-change-me"
+    jwt_secret: str = "dev-secret-change-me-please-32bytes-min"
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 60
 

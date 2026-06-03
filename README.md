@@ -69,6 +69,18 @@ mypy app              # tipos
 | GET    | `/api/v1/auth/me`        | Datos del usuario autenticado.               |
 | GET    | `/api/v1/admin/ping`     | Ruta protegida solo para `administrador`.    |
 
+## Catálogo de productos (CRUD — RF-01 / RF-08.2)
+
+Lectura pública; la escritura requiere token de `administrador`.
+
+| Método | Ruta                          | Acceso | Descripción                                  |
+|--------|-------------------------------|--------|----------------------------------------------|
+| GET    | `/api/v1/products`            | Público| Lista productos (filtros `?category=&brand=`).|
+| GET    | `/api/v1/products/{id}`       | Público| Detalle de un producto.                      |
+| POST   | `/api/v1/products`            | Admin  | Crea un producto.                            |
+| PUT    | `/api/v1/products/{id}`       | Admin  | Actualiza un producto (parcial).             |
+| DELETE | `/api/v1/products/{id}`       | Admin  | Elimina un producto.                         |
+
 ## Git Flow
 
 - `main` — releases estables.
