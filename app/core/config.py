@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     # Rate limiting del login (formato de slowapi, p. ej. "5/minute")
     login_rate_limit: str = "5/minute"
 
+    # Orígenes permitidos para CORS (frontend web). Override con JSON en la variable CORS_ORIGINS.
+    cors_origins: list[str] = ["http://localhost:5173", "http://localhost:3000"]
+
     # Credenciales del administrador inicial (sembrado vía `python -m app.seed`)
     admin_email: str = "admin@ecommerce.com"
     admin_password: str = "Admin123!"
