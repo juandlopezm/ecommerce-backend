@@ -15,3 +15,15 @@ class InvalidCredentialsError(ApplicationError):
 
 class ProductNotFoundError(ApplicationError):
     """No se encontró el producto solicitado."""
+
+
+class OutOfStockError(ApplicationError):
+    """No hay stock suficiente para completar la compra (RF-02.3 / HU-10)."""
+
+
+class PaymentRejectedError(ApplicationError):
+    """El pago fue rechazado por la pasarela (HU-07)."""
+
+
+class OrderNotFoundError(ApplicationError):
+    """No se encontró el pedido solicitado."""
