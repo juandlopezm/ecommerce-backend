@@ -66,4 +66,4 @@ testpaths = ["tests"]
 addopts = "--cov=app --cov-report=term-missing"
 
 [tool.coverage.run]
-omit = ["app/seed.py", "migrations/*"]
+omit = ["app/seed.py", "app/seed_products.py", "migrations/*"]

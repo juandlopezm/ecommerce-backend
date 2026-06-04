@@ -41,9 +41,10 @@ copy .env.example .env        # Windows
 # 3. Levantar PostgreSQL
 docker compose up -d db
 
-# 4. Aplicar migraciones y sembrar el administrador
+# 4. Aplicar migraciones y sembrar el administrador (+ productos de prueba opcionales)
 alembic upgrade head
 python -m app.seed
+python -m app.seed_products   # opcional: 5 productos de prueba en el catálogo
 
 # 5. Ejecutar la API
 uvicorn app.main:app --reload
