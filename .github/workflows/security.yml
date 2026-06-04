@@ -1,8 +1,5 @@
 name: Seguridad - OWASP ZAP
 
-# Escaneo dinámico de seguridad (DAST) contra el backend desplegado.
-# Se ejecuta manualmente y de forma programada (semanal). Es un escaneo "baseline":
-# pasivo (no lanza ataques activos ni crea datos), revisa cabeceras, TLS, cookies, etc.
 on:
   workflow_dispatch:
     inputs:
@@ -33,7 +30,7 @@ jobs:
           done
 
       - name: OWASP ZAP Baseline Scan
-        uses: zaproxy/action-baseline@v0.12.0
+        uses: zaproxy/action-baseline@master
         with:
           target: ${{ github.event.inputs.target || 'https://ecommerce-backend-8ckl.onrender.com' }}
           rules_file_name: .zap/rules.tsv
