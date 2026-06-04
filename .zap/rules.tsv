@@ -1,0 +1,9 @@
+# Reglas de OWASP ZAP para ajustar los hallazgos del escaneo.
+# Formato (separado por TABS):  <id_de_regla>	<IGNORE|WARN|FAIL>	<comentario opcional>
+#
+# Por defecto ZAP usa WARN. Aquí puedes silenciar (IGNORE) alertas ya revisadas que sean
+# falsos positivos o aceptables para este MVP, o elevarlas a FAIL para que rompan el build.
+#
+# Ejemplos (descomenta y ajusta tras revisar el primer reporte):
+# 10096	IGNORE	Timestamp Disclosure - ruido, no aplica
+# 10027	IGNORE	Information Disclosure - Suspicious Comments
