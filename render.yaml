@@ -1,0 +1,35 @@
+# Blueprint de Render para desplegar el backend (gratis) con PostgreSQL en Neon.
+# En Render: New > Blueprint > conecta este repo. Configura las variables marcadas con sync:false.
+services:
+  - type: web
+    name: ecommerce-backend
+    runtime: python
+    plan: free
+    region: oregon
+    healthCheckPath: /health
+    buildCommand: pip install -e ".[postgres]"
+    # Aplica migraciones, siembra admin (+ productos demo) y arranca en el puerto que asigna Render.
+    startCommand: >-
+      alembic upgrade head &&
+      python -m app.seed &&
+      python -m app.seed_products &&
+      uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.7"
+      - key: JWT_SECRET
+        generateValue: true
+      # DATABASE_URL: la cadena de Neon, con el driver +psycopg, p. ej.:
+      # postgresql+psycopg://user:pass@ep-xxx.neon.tech/neondb?sslmode=require
+      - key: DATABASE_URL
+        sync: false
+      # CORS_ORIGINS: JSON con la URL del frontend en Vercel, p. ej.:
+      # ["https://ecommerce-frontend.vercel.app"]
+      - key: CORS_ORIGINS
+        sync: false
+      - key: ADMIN_EMAIL
+        value: admin@ecommerce.com
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: ADMIN_FULL_NAME
+        value: Administrador

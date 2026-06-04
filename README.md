@@ -33,7 +33,7 @@ tests/             # pruebas unitarias e integración (pytest)
 # 1. Crear entorno e instalar dependencias
 python -m venv .venv
 .venv\Scripts\activate        # Windows
-pip install -e ".[dev]"
+pip install -e ".[dev,postgres]"   # 'postgres' instala el driver psycopg para PostgreSQL
 
 # 2. Configurar variables de entorno
 copy .env.example .env        # Windows
@@ -41,9 +41,10 @@ copy .env.example .env        # Windows
 # 3. Levantar PostgreSQL
 docker compose up -d db
 
-# 4. Aplicar migraciones y sembrar el administrador
+# 4. Aplicar migraciones y sembrar el administrador (+ productos de prueba opcionales)
 alembic upgrade head
 python -m app.seed
+python -m app.seed_products   # opcional: 5 productos de prueba en el catálogo
 
 # 5. Ejecutar la API
 uvicorn app.main:app --reload
@@ -68,6 +69,34 @@ mypy app              # tipos
 | POST   | `/api/v1/auth/login`     | Login OAuth2, devuelve JWT (con rate limit). |
 | GET    | `/api/v1/auth/me`        | Datos del usuario autenticado.               |
 | GET    | `/api/v1/admin/ping`     | Ruta protegida solo para `administrador`.    |
+
+## Catálogo de productos (CRUD — RF-01 / RF-08.2)
+
+Lectura pública; la escritura requiere token de `administrador`.
+
+| Método | Ruta                          | Acceso | Descripción                                  |
+|--------|-------------------------------|--------|----------------------------------------------|
+| GET    | `/api/v1/products`            | Público| Lista productos (filtros `?category=&brand=`).|
+| GET    | `/api/v1/products/{id}`       | Público| Detalle de un producto.                      |
+| POST   | `/api/v1/products`            | Admin  | Crea un producto.                            |
+| PUT    | `/api/v1/products/{id}`       | Admin  | Actualiza un producto (parcial).             |
+| DELETE | `/api/v1/products/{id}`       | Admin  | Elimina un producto.                         |
+
+## Pedidos y checkout (RF-04 / RF-05 / RF-06)
+
+Compra como invitado o autenticado; el pago es simulado (Strategy/Factory). El checkout descuenta
+stock de forma **atómica** (HU-10).
+
+| Método | Ruta                                   | Acceso | Descripción                                       |
+|--------|----------------------------------------|--------|---------------------------------------------------|
+| POST   | `/api/v1/orders`                       | Público| Procesa la compra y genera el pedido.             |
+| GET    | `/api/v1/orders/{id}`                  | Público| Consulta un pedido (confirmación/seguimiento).    |
+| GET    | `/api/v1/admin/orders`                 | Admin  | Lista todos los pedidos.                          |
+| PATCH  | `/api/v1/admin/orders/{id}/status`     | Admin  | Cambia el estado (al `cancelado` restaura stock). |
+| GET    | `/api/v1/admin/products/low-stock`     | Admin  | Productos con stock bajo o agotado.               |
+
+Métodos de pago: `pasarela` (sandbox, aprueba salvo `simulate_payment_failure`) y `contra_entrega`
+(queda `pendiente`). Estados del pedido: `pendiente`, `confirmado`, `enviado`, `cancelado`.
 
 ## Git Flow
 
