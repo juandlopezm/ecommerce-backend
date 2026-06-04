@@ -33,7 +33,7 @@ jobs:
           done
 
       - name: OWASP ZAP Baseline Scan
-        uses: zaproxy/action-baseline@v0.12.0
+        uses: zaproxy/action-baseline@master
         with:
           target: ${{ github.event.inputs.target || 'https://ecommerce-backend-8ckl.onrender.com' }}
           rules_file_name: .zap/rules.tsv
