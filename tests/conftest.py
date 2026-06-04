@@ -1,5 +1,11 @@
-"""Fixtures de pruebas: base de datos SQLite en memoria y cliente HTTP de FastAPI."""
+"""Fixtures de pruebas.
 
+Por defecto usan SQLite en memoria (rápido). Si se define la variable de entorno
+``TEST_DATABASE_URL`` (p. ej. apuntando a PostgreSQL), la misma suite se ejecuta contra esa
+base de datos real — así probamos la integración con la BD de producción (RNF-08.2).
+"""
+
+import os
 from collections.abc import Generator
 
 import pytest
@@ -26,12 +32,21 @@ def _reset_limiter() -> None:
 
 @pytest.fixture
 def engine() -> Generator[Engine, None, None]:
-    """Engine SQLite en memoria compartido (StaticPool mantiene una única conexión)."""
-    eng = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
+    """Engine de prueba.
+
+    - Sin ``TEST_DATABASE_URL``: SQLite en memoria (StaticPool, una sola conexión).
+    - Con ``TEST_DATABASE_URL``: base de datos real (p. ej. PostgreSQL) para integración.
+    """
+    test_db_url = os.getenv("TEST_DATABASE_URL")
+    if test_db_url:
+        eng = create_engine(test_db_url)
+    else:
+        eng = create_engine(
+            "sqlite://",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+    Base.metadata.drop_all(eng)
     Base.metadata.create_all(eng)
     yield eng
     Base.metadata.drop_all(eng)
