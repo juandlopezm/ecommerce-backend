@@ -61,9 +61,7 @@ plugins = ["pydantic.mypy"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# Nota: el gate de cobertura (--cov-fail-under) se reactivará cuando el CRUD tenga pruebas
-# (ejercicio de QA con GitHub Actions). Por ahora solo se reporta la cobertura.
-addopts = "--cov=app --cov-report=term-missing"
+addopts = "--cov=app --cov-report=term-missing --cov-fail-under=80"
 
 [tool.coverage.run]
 omit = ["app/seed.py", "app/seed_products.py", "migrations/*"]

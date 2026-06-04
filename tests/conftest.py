@@ -72,3 +72,50 @@ def client(engine: Engine) -> Generator[TestClient, None, None]:
     app.dependency_overrides.clear()
     settings.login_rate_limit = "1000/minute"
     _reset_limiter()
+
+
+@pytest.fixture
+def admin_headers(client: TestClient, db_session: Session) -> dict[str, str]:
+    """Crea un administrador y devuelve el header Authorization con su token."""
+    from app.application.schemas.user import UserCreate
+    from app.application.services.auth_service import AuthService
+    from app.domain.entities.user import Role
+    from app.infrastructure.repositories.sqlalchemy_user_repository import (
+        SqlAlchemyUserRepository,
+    )
+
+    AuthService(SqlAlchemyUserRepository(db_session)).register(
+        UserCreate(email="admin@x.com", password="Admin123!", full_name="Admin"),
+        role=Role.ADMIN,
+    )
+    token = client.post(
+        "/api/v1/auth/login",
+        data={"username": "admin@x.com", "password": "Admin123!"},
+    ).json()["access_token"]
+    return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture
+def make_product(db_session: Session):
+    """Factory que inserta un producto en la base de datos de prueba."""
+    from decimal import Decimal
+
+    from app.domain.entities.product import Product
+    from app.infrastructure.repositories.sqlalchemy_product_repository import (
+        SqlAlchemyProductRepository,
+    )
+
+    repo = SqlAlchemyProductRepository(db_session)
+
+    def _make(**overrides: object) -> Product:
+        data: dict = {
+            "name": "Labial",
+            "price": Decimal("10000"),
+            "stock": 5,
+            "brand": "NYX",
+            "category": "Maquillaje",
+        }
+        data.update(overrides)
+        return repo.add(Product(**data))
+
+    return _make
