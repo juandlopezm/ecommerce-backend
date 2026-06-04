@@ -26,6 +26,9 @@ class Settings(BaseSettings):
 
     # Orígenes permitidos para CORS (frontend web). Override con JSON en la variable CORS_ORIGINS.
     cors_origins: list[str] = ["http://localhost:5173", "http://localhost:3000"]
+    # Regex opcional para permitir orígenes dinámicos (p. ej. las URLs de despliegue de Vercel).
+    # Ej.: https://ecommerce-frontend.*\.vercel\.app
+    cors_origin_regex: str | None = None
 
     # Credenciales del administrador inicial (sembrado vía `python -m app.seed`)
     admin_email: str = "admin@ecommerce.com"
