@@ -82,6 +82,22 @@ Lectura pública; la escritura requiere token de `administrador`.
 | PUT    | `/api/v1/products/{id}`       | Admin  | Actualiza un producto (parcial).             |
 | DELETE | `/api/v1/products/{id}`       | Admin  | Elimina un producto.                         |
 
+## Pedidos y checkout (RF-04 / RF-05 / RF-06)
+
+Compra como invitado o autenticado; el pago es simulado (Strategy/Factory). El checkout descuenta
+stock de forma **atómica** (HU-10).
+
+| Método | Ruta                                   | Acceso | Descripción                                       |
+|--------|----------------------------------------|--------|---------------------------------------------------|
+| POST   | `/api/v1/orders`                       | Público| Procesa la compra y genera el pedido.             |
+| GET    | `/api/v1/orders/{id}`                  | Público| Consulta un pedido (confirmación/seguimiento).    |
+| GET    | `/api/v1/admin/orders`                 | Admin  | Lista todos los pedidos.                          |
+| PATCH  | `/api/v1/admin/orders/{id}/status`     | Admin  | Cambia el estado (al `cancelado` restaura stock). |
+| GET    | `/api/v1/admin/products/low-stock`     | Admin  | Productos con stock bajo o agotado.               |
+
+Métodos de pago: `pasarela` (sandbox, aprueba salvo `simulate_payment_failure`) y `contra_entrega`
+(queda `pendiente`). Estados del pedido: `pendiente`, `confirmado`, `enviado`, `cancelado`.
+
 ## Git Flow
 
 - `main` — releases estables.
