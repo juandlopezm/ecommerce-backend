@@ -1,50 +1,90 @@
 name: CI Backend
 
-# Se ejecuta en cada push a cualquier rama y en los Pull Requests hacia develop/main.
+# Estrategia por capas:
+#  - lint + unitarias  -> en CADA push (cualquier rama) y en cada PR (feedback rápido).
+#  - integración + gate de cobertura (>=80%) -> solo en PR a develop/main y en push a develop/main
+#    (es decir, el criterio de aceptación se exige al mergear / ir a producción).
 on:
   push:
     branches: ["**"]
   pull_request:
     branches: [develop, main]
 
+# Cancela corridas viejas de la misma rama/PR para no acumular.
+concurrency:
+  group: ci-backend-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write # py-cov-action guarda el badge de cobertura en una rama de datos
+  pull-requests: write # comentario de cobertura en el PR
+  checks: write # dorny/test-reporter publica el check de resultados
+
 jobs:
-  test:
-    name: Lint + tipos + pruebas
+  lint:
+    name: Lint y tipos
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout del código
-        uses: actions/checkout@v4
-
-      - name: Configurar Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: pyproject.toml
-
-      - name: Instalar dependencias
-        run: |
+      - run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
-
       - name: Lint (ruff)
         run: ruff check .
-
       - name: Formato (black)
         run: black --check .
-
       - name: Tipos (mypy)
         run: mypy app
 
-      - name: Pruebas + cobertura (pytest, SQLite)
-        run: pytest
-
-  integration-postgres:
-    name: Integración con PostgreSQL
+  unit:
+    name: Pruebas unitarias
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: Unitarias + cobertura
+        run: >-
+          pytest tests/unit
+          --cov=app --cov-report=xml --cov-report=html
+          --junitxml=junit-unit.xml
+      - name: Publicar resultados (unitarias)
+        uses: dorny/test-reporter@v1
+        if: always()
+        continue-on-error: true
+        with:
+          name: Resultados unitarias
+          path: junit-unit.xml
+          reporter: java-junit
+      - name: Subir cobertura unitaria (artefacto)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cobertura-unitarias
+          path: |
+            coverage.xml
+            htmlcov/
+          retention-days: 7
 
-    # Levanta un PostgreSQL real como servicio para las pruebas de integración con BD.
+  integration:
+    name: Integracion y cobertura
+    runs-on: ubuntu-latest
+    # Solo al mergear / ir a producción: PR a develop|main, o push directo a develop|main.
+    if: >-
+      github.event_name == 'pull_request' ||
+      github.ref == 'refs/heads/develop' ||
+      github.ref == 'refs/heads/main'
     services:
       postgres:
         image: postgres:16
@@ -59,31 +99,56 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 5
-
     env:
-      # La suite usa esta BD real en lugar de SQLite (ver tests/conftest.py).
       TEST_DATABASE_URL: postgresql+psycopg://ecommerce:ecommerce@localhost:5432/ecommerce_test
-
     steps:
-      - name: Checkout del código
-        uses: actions/checkout@v4
-
-      - name: Configurar Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: pyproject.toml
-
-      - name: Instalar dependencias (con driver de PostgreSQL)
-        run: |
+      - run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev,postgres]"
-
       - name: Validar migraciones en PostgreSQL
         env:
           DATABASE_URL: postgresql+psycopg://ecommerce:ecommerce@localhost:5432/ecommerce_test
         run: alembic upgrade head
-
-      - name: Pruebas de integración contra PostgreSQL
-        run: pytest
+      # Suite COMPLETA contra PostgreSQL con el GATE DE ACEPTACIÓN (>=80%).
+      - name: Suite completa + gate de cobertura (>=80%)
+        run: >-
+          pytest
+          --cov=app --cov-report=xml --cov-report=html
+          --cov-fail-under=80
+          --junitxml=junit-all.xml
+      - name: Publicar resultados (integración)
+        uses: dorny/test-reporter@v1
+        if: always()
+        continue-on-error: true
+        with:
+          name: Resultados integracion
+          path: junit-all.xml
+          reporter: java-junit
+      - name: Comentario de cobertura en el PR
+        uses: py-cov-action/python-coverage-comment-action@v3
+        if: always()
+        continue-on-error: true
+        with:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Subir a Codecov
+        uses: codecov/codecov-action@v4
+        if: always()
+        continue-on-error: true
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage.xml
+      - name: Subir cobertura total (artefacto)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cobertura-integracion
+          path: |
+            coverage.xml
+            htmlcov/
+          retention-days: 7

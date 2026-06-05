@@ -1,4 +1,4 @@
-"""Pruebas unitarias del repositorio de productos sobre SQLAlchemy (SQLite en memoria)."""
+"""Pruebas de integración del repositorio de productos sobre SQLAlchemy (SQLite en memoria)."""
 
 from decimal import Decimal
 

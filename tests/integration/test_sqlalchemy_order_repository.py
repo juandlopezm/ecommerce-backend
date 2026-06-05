@@ -1,4 +1,4 @@
-"""Pruebas unitarias del repositorio de pedidos sobre SQLAlchemy (SQLite en memoria).
+"""Pruebas de integración del repositorio de pedidos sobre SQLAlchemy (SQLite en memoria).
 
 Verifica el checkout atómico (descuento de stock), la consulta, el cambio de estado y la
 restauración de stock al cancelar.
