@@ -32,3 +32,18 @@ def test_user_is_admin_true_for_admin() -> None:
 
 def test_user_is_admin_false_for_cliente() -> None:
     assert _user(Role.CLIENTE).is_admin is False
+
+
+def test_product_available_with_stock_one_boundary() -> None:
+    # Borde inferior de `stock > 0`: stock == 1 -> disponible.
+    assert _product(stock=1).is_available is True
+
+
+def test_product_not_available_with_negative_stock() -> None:
+    # Edge: stock negativo (dato corrupto) -> no disponible.
+    assert _product(stock=-1).is_available is False
+
+
+def test_user_is_admin_false_for_invitado() -> None:
+    # Tercer valor del enum Role: invitado tampoco es admin.
+    assert _user(Role.INVITADO).is_admin is False
