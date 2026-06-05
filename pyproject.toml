@@ -34,6 +34,7 @@ dev = [
     "black>=24.4",
     "mypy>=1.10",
     "pre-commit>=3.7",
+    "bandit[toml]>=1.7",
 ]
 
 [build-system]
@@ -69,6 +70,12 @@ testpaths = ["tests"]
 # El gate de cobertura (--cov-fail-under=80) NO va aquí: se aplica solo en el job de integración
 # de la CI (merge/producción). Así las corridas locales y de feature no fallan por cobertura.
 addopts = "--cov=app --cov-report=term-missing"
+
+[tool.bandit]
+targets = ["app"]
+exclude_dirs = [".venv", "tests", "migrations"]
+# B104 (bind 0.0.0.0) es aceptable en contenedor; B311 no aplica (no es criptografía).
+skips = ["B104", "B311"]
 
 [tool.coverage.run]
 omit = ["app/seed.py", "app/seed_products.py", "migrations/*"]
