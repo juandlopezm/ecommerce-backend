@@ -1,8 +1,8 @@
-"""Pruebas unitarias de los handlers de los endpoints, llamándolos directamente (sin HTTP).
+"""Pruebas de integración de los handlers de los endpoints (con BD real), sin servidor HTTP.
 
-El foco es la lógica del controlador y la traducción de errores de negocio a códigos HTTP
-(404 no encontrado, 409 conflicto/sin stock, 402 pago rechazado). Se usan repos reales sobre
-SQLite en memoria y se ejecutan las corutinas con asyncio.run.
+Se llaman las corutinas de los controladores directamente (asyncio.run) con servicios y repositorios
+SQLAlchemy reales sobre SQLite en memoria. El foco es la traducción de errores de negocio a códigos
+HTTP (404, 409, 402). Tocan la base de datos, por eso son integración (no unitarias).
 """
 
 import asyncio

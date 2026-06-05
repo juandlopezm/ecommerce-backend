@@ -1,4 +1,4 @@
-"""Pruebas unitarias del repositorio de usuarios sobre SQLAlchemy (SQLite en memoria).
+"""Pruebas de integración del repositorio de usuarios sobre SQLAlchemy (SQLite en memoria).
 
 Usa el fixture ``db_session`` (definido en tests/conftest.py) que crea una base de datos
 en memoria con las tablas ya creadas, sin tocar la base real.

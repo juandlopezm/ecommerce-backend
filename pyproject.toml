@@ -33,6 +33,7 @@ dev = [
     "ruff>=0.5",
     "black>=24.4",
     "mypy>=1.10",
+    "pre-commit>=3.7",
 ]
 
 [build-system]
@@ -65,7 +66,11 @@ plugins = ["pydantic.mypy"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "--cov=app --cov-report=term-missing --cov-fail-under=80"
+# El gate de cobertura (--cov-fail-under=80) NO va aquí: se aplica solo en el job de integración
+# de la CI (merge/producción). Así las corridas locales y de feature no fallan por cobertura.
+addopts = "--cov=app --cov-report=term-missing"
 
 [tool.coverage.run]
 omit = ["app/seed.py", "app/seed_products.py", "migrations/*"]
+# Rutas relativas: necesario para el comentario de cobertura en el PR (py-cov-action) desde el runner.
+relative_files = true

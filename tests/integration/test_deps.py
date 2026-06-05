@@ -1,7 +1,7 @@
-"""Pruebas unitarias de las dependencias de FastAPI (app/api/deps.py).
+"""Pruebas de integración de las dependencias de FastAPI (app/api/deps.py), con BD real.
 
-Se llaman las funciones directamente (sin servidor HTTP), pasándoles repos reales sobre
-SQLite en memoria y tokens generados a mano.
+Se llaman las funciones directamente (sin servidor HTTP), pasándoles repositorios SQLAlchemy reales
+sobre SQLite en memoria y tokens generados a mano. Tocan la base de datos, por eso son integración.
 """
 
 import jwt

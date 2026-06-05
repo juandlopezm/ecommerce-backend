@@ -46,9 +46,7 @@ class VisitanteTienda(HttpUser):
 
     @task(1)
     def filtrar_por_categoria(self) -> None:
-        self.client.get(
-            "/api/v1/products?category=Maquillaje", name="/api/v1/products?category"
-        )
+        self.client.get("/api/v1/products?category=Maquillaje", name="/api/v1/products?category")
 
     @task(1)
     def health(self) -> None:
