@@ -32,7 +32,7 @@ def _create(**overrides: object) -> ProductCreate:
 
 def test_create_and_get(service: ProductService) -> None:
     created = service.create(_create())
-    assert created.id is not None
+    assert created.id == 1  # primer producto insertado en el repo falso
     assert service.get(created.id).name == "Labial"
 
 
@@ -70,3 +70,19 @@ def test_list_filters_by_category(service: ProductService) -> None:
     service.create(_create(category="Perfumes"))
     assert len(service.list(category="Maquillaje")) == 1
     assert len(service.list()) == 2
+
+
+def test_update_with_no_fields_keeps_product_unchanged(service: ProductService) -> None:
+    # Borde: ProductUpdate vacío -> el bucle de cambios no itera -> el producto no cambia.
+    created = service.create(_create(name="Original", stock=7))
+    updated = service.update(created.id, ProductUpdate())
+    assert updated.name == "Original"
+    assert updated.stock == 7
+
+
+def test_list_filters_by_brand(service: ProductService) -> None:
+    # La lista también filtra por marca (no solo por categoría).
+    service.create(_create(brand="NYX"))
+    service.create(_create(brand="MAC"))
+    assert len(service.list(brand="NYX")) == 1
+    assert len(service.list(brand="MAC")) == 1

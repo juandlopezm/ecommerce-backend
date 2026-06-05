@@ -8,6 +8,7 @@ import pytest
 from app.application.errors import EmailAlreadyExistsError, InvalidCredentialsError
 from app.application.schemas.user import UserCreate
 from app.application.services.auth_service import AuthService
+from app.core.security import verify_password
 from app.domain.entities.user import Role, User
 from app.domain.repositories.user_repository import UserRepository
 
@@ -50,10 +51,12 @@ def _new_user() -> UserCreate:
 # y el password debe almacenarse hasheado.
 def test_register_creates_user_with_hashed_password(service: AuthService) -> None:
     user = service.register(_new_user())
-    assert user.id is not None
+    assert user.id == 1  # primer usuario insertado en el repo falso
     assert user.email == "cliente@x.com"  # normalizado a minúsculas
     assert user.role == Role.CLIENTE
     assert user.hashed_password != "Secreta123!"
+    # Aserción fuerte: el hash es válido (la contraseña original valida contra él).
+    assert verify_password("Secreta123!", user.hashed_password) is True
 
 
 # Se debe poder registrar un usuario con un rol específico, como ADMIN.
@@ -97,3 +100,10 @@ def test_authenticate_inactive_user_raises() -> None:
     user.is_active = False
     with pytest.raises(InvalidCredentialsError):
         service.authenticate("cliente@x.com", "Secreta123!")
+
+
+# El login normaliza el correo a minúsculas: se registra "Cliente@X.com" y se entra en MAYÚSCULAS.
+def test_authenticate_is_case_insensitive_for_email(service: AuthService) -> None:
+    service.register(_new_user())
+    user = service.authenticate("CLIENTE@X.COM", "Secreta123!")
+    assert user.email == "cliente@x.com"
