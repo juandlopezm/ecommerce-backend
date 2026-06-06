@@ -45,28 +45,21 @@ class VisitanteTienda(HttpUser):
     def ver_detalle(self) -> None:
         if self.product_ids:
             product_id = random.choice(self.product_ids)
-            self.client.get(
-                f"/api/v1/products/{product_id}",
-                name="/api/v1/products/[id]"
-            )
+            self.client.get(f"/api/v1/products/{product_id}", name="/api/v1/products/[id]")
 
     @task(1)
     def filtrar_por_categoria(self) -> None:
         categories = ["Maquillaje", "Skincare", "Fragancia", "Tratamiento"]
         category = random.choice(categories)
         self.client.get(
-            f"/api/v1/products?category={category}",
-            name="/api/v1/products?category=[name]"
+            f"/api/v1/products?category={category}", name="/api/v1/products?category=[name]"
         )
 
     @task(1)
     def filtrar_por_marca(self) -> None:
         brands = ["Marca A", "Marca B", "Marca C"]
         brand = random.choice(brands)
-        self.client.get(
-            f"/api/v1/products?brand={brand}",
-            name="/api/v1/products?brand=[name]"
-        )
+        self.client.get(f"/api/v1/products?brand={brand}", name="/api/v1/products?brand=[name]")
 
     @task(1)
     def health_check(self) -> None:
@@ -98,10 +91,7 @@ class Comprador(HttpUser):
         """Revisa detalles de productos candidatos."""
         if self.product_ids:
             product_id = random.choice(self.product_ids)
-            self.client.get(
-                f"/api/v1/products/{product_id}",
-                name="/api/v1/products/[id]"
-            )
+            self.client.get(f"/api/v1/products/{product_id}", name="/api/v1/products/[id]")
 
     @task(3)
     def realizar_compra(self) -> None:
@@ -110,62 +100,43 @@ class Comprador(HttpUser):
             return
 
         product_id = random.choice(self.product_ids)
-        
+
         order_data = {
             "customer_name": f"Cliente {random.randint(1000, 9999)}",
             "customer_email": f"cliente{random.randint(1000, 9999)}@example.com",
-            "items": [
-                {
-                    "product_id": product_id,
-                    "quantity": random.randint(1, 3)
-                }
-            ],
+            "items": [{"product_id": product_id, "quantity": random.randint(1, 3)}],
             "shipping_address": "Calle Falsa 123",
-            "payment_method": random.choice(["pasarela", "contra_entrega"])
+            "payment_method": random.choice(["pasarela", "contra_entrega"]),
         }
 
-        resp = self.client.post(
-            "/api/v1/orders",
-            json=order_data,
-            name="/api/v1/orders"
-        )
-        
+        resp = self.client.post("/api/v1/orders", json=order_data, name="/api/v1/orders")
+
         if resp.ok:
             order_id = resp.json().get("id")
             if order_id:
                 # Simula que el cliente consulta su pedido
-                self.client.get(
-                    f"/api/v1/orders/{order_id}",
-                    name="/api/v1/orders/[id]"
-                )
+                self.client.get(f"/api/v1/orders/{order_id}", name="/api/v1/orders/[id]")
 
 
 class UsuarioAutenticado(HttpUser):
     """Cliente autenticado (simula administrador o usuario registrado)."""
 
     wait_time = constant(2)
-    
+
     def on_start(self) -> None:
         """Autentica el usuario al iniciar."""
         self.token: str = ""
         self.product_ids: list[int] = []
-        
+
         # Intenta login
-        login_data = {
-            "username": "admin@ecommerce.com",
-            "password": "Admin123!"
-        }
-        
-        resp = self.client.post(
-            "/api/v1/auth/login",
-            data=login_data,
-            name="/api/v1/auth/login"
-        )
-        
+        login_data = {"username": "admin@ecommerce.com", "password": "Admin123!"}
+
+        resp = self.client.post("/api/v1/auth/login", data=login_data, name="/api/v1/auth/login")
+
         if resp.ok:
             self.token = resp.json().get("access_token", "")
             self.client.headers.update({"Authorization": f"Bearer {self.token}"})
-        
+
         # Carga productos
         resp = self.client.get("/api/v1/products")
         if resp.ok:
@@ -195,14 +166,10 @@ class UsuarioAutenticado(HttpUser):
             "price": round(random.uniform(10, 200), 2),
             "brand": random.choice(["Marca A", "Marca B", "Marca C"]),
             "category": random.choice(["Maquillaje", "Skincare", "Fragancia"]),
-            "stock": random.randint(5, 100)
+            "stock": random.randint(5, 100),
         }
-        
-        self.client.post(
-            "/api/v1/products",
-            json=product_data,
-            name="/api/v1/products [POST]"
-        )
+
+        self.client.post("/api/v1/products", json=product_data, name="/api/v1/products [POST]")
 
     @task(1)
     def actualizar_producto(self) -> None:
@@ -211,13 +178,13 @@ class UsuarioAutenticado(HttpUser):
             product_id = random.choice(self.product_ids)
             update_data = {
                 "price": round(random.uniform(10, 200), 2),
-                "stock": random.randint(5, 100)
+                "stock": random.randint(5, 100),
             }
-            
+
             self.client.put(
                 f"/api/v1/products/{product_id}",
                 json=update_data,
-                name="/api/v1/products/[id] [PUT]"
+                name="/api/v1/products/[id] [PUT]",
             )
 
     @task(1)
@@ -228,13 +195,11 @@ class UsuarioAutenticado(HttpUser):
             orders = resp.json()
             if orders:
                 order_id = random.choice(orders).get("id")
-                status_data = {
-                    "status": random.choice(["confirmado", "enviado", "cancelado"])
-                }
+                status_data = {"status": random.choice(["confirmado", "enviado", "cancelado"])}
                 self.client.patch(
                     f"/api/v1/admin/orders/{order_id}/status",
                     json=status_data,
-                    name="/api/v1/admin/orders/[id]/status"
+                    name="/api/v1/admin/orders/[id]/status",
                 )
 
 
@@ -242,15 +207,14 @@ class VistazoRapido(HttpUser):
     """Cliente que hace búsquedas rápidas (mobile-like, sin esperar)."""
 
     wait_time = between(0.5, 1.5)
-    
+
     @task(5)
     def buscar_categoria(self) -> None:
         """Búsquedas rápidas de categorías."""
         categories = ["Maquillaje", "Skincare", "Fragancia"]
         for category in categories:
             self.client.get(
-                f"/api/v1/products?category={category}",
-                name="/api/v1/products?category=[fast]"
+                f"/api/v1/products?category={category}", name="/api/v1/products?category=[fast]"
             )
 
     @task(3)

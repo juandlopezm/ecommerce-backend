@@ -38,9 +38,7 @@ def parse_locust_csv(csv_path: str) -> dict[str, LocustStats]:
                         name=name,
                         requests=int(row.get("# requests", 0)),
                         failures=int(row.get("# failures", 0)),
-                        median=float(row.get("Median", 0)) or float(
-                            row.get("50%ile", 0)
-                        ),
+                        median=float(row.get("Median", 0)) or float(row.get("50%ile", 0)),
                         p95=float(row.get("95%", 0)) or float(row.get("95%ile", 0)),
                         max_time=float(row.get("Max", 0)),
                         avg_time=float(row.get("Average", 0)),
@@ -58,18 +56,18 @@ def find_html_reports(reports_dir: Path) -> dict[str, Path]:
     reports = {}
     if not reports_dir.exists():
         return reports
-    
+
     for html_file in sorted(reports_dir.glob("locust-*.html")):
         if "stats" not in html_file.name:  # Excluir archivos de stats
             key = html_file.stem.replace("locust-", "")
             reports[key] = html_file
-    
+
     return reports
 
 
 def generate_index_html(html_reports: dict[str, Path], output_path: str) -> None:
     """Genera índice HTML con links a reportes HTML de Locust."""
-    
+
     html_content = """
     <!DOCTYPE html>
     <html lang="es">
@@ -161,14 +159,14 @@ def generate_index_html(html_reports: dict[str, Path], output_path: str) -> None
         for test_name in ["standard", "checkout", "admin", "stress"]:
             if test_name not in html_reports:
                 continue
-            
+
             info = test_info.get(test_name)
             if not info:
                 continue
-            
+
             title, desc, badge_type = info
             badge_class = f"badge-{badge_type}"
-            
+
             html_content += f"""
             <div class="card">
                 <h2>{title}</h2>
@@ -177,8 +175,8 @@ def generate_index_html(html_reports: dict[str, Path], output_path: str) -> None
                 <a href="{html_reports[test_name].name}">📈 Ver reporte →</a>
             </div>
             """
-        
-        html_content += '</div>'
+
+        html_content += "</div>"
     else:
         html_content += """
         <div class="empty">
@@ -214,11 +212,11 @@ def main():
     # Buscar reportes HTML generados por Locust
     html_reports = find_html_reports(reports_dir)
     generate_index_html(html_reports, output_path)
-    
+
     if not html_reports:
         print("⚠️  Advertencia: No se encontraron reportes HTML")
         print(f"   Esperaba: {reports_dir}/locust-*.html")
-    
+
     print("✅ Reporte completado")
     sys.exit(0)  # Siempre exitoso
 
