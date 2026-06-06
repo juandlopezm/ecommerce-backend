@@ -98,3 +98,28 @@ def test_cancel_restores_stock(service: OrderService, products: FakeProductRepos
 def test_get_missing_order_raises(service: OrderService) -> None:
     with pytest.raises(OrderNotFoundError):
         service.get(999)
+
+
+def test_checkout_sums_total_of_multiple_items(products: FakeProductRepository) -> None:
+    # El bucle del checkout recorre varios ítems y suma sus subtotales.
+    products.add(Product(name="Base", price=Decimal("5000"), stock=10))  # id = 2
+    service = OrderService(FakeOrderRepository(products), products)
+    order = service.checkout(
+        _request(
+            items=[
+                CheckoutItem(product_id=1, quantity=2),
+                CheckoutItem(product_id=2, quantity=3),
+            ]
+        )
+    )
+    assert order.total == Decimal("35000")  # 2*10000 + 3*5000
+    assert len(order.items) == 2
+    assert products.get_by_id(1).stock == 3  # type: ignore[union-attr]
+    assert products.get_by_id(2).stock == 7  # type: ignore[union-attr]
+
+
+def test_list_returns_all_orders(service: OrderService) -> None:
+    # service.list() devuelve todos los pedidos creados.
+    service.checkout(_request())
+    service.checkout(_request())
+    assert len(service.list()) == 2

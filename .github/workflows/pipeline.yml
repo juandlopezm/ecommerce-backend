@@ -1,0 +1,418 @@
+name: Pipeline Backend
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Pipeline ÚNICO: ejecuta TODAS las fases en una sola corrida sin importar la
+# rama. Despliegue a producción solo desde main. Resultados acumulativos en
+# el dashboard.
+# ─────────────────────────────────────────────────────────────────────────────
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [develop, main]
+  workflow_dispatch:
+
+concurrency:
+  group: pipeline-backend-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  actions: read
+  checks: write
+  pull-requests: write
+  packages: write
+  pages: write
+  id-token: write
+
+jobs:
+  # ═══ 1. Lint y tipos ══════════════════════════════════════════════════════════
+  lint:
+    name: Lint y tipos
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - run: ruff check .
+      - run: black --check .
+      - run: mypy app
+
+  # ═══ 2. Pruebas unitarias (fakes en memoria) ══════════════════════════════════
+  unit:
+    name: Pruebas unitarias
+    needs: lint
+    runs-on: ubuntu-latest
+    env:
+      COVERAGE_FILE: .coverage.unit
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: pytest (unit)
+        run: |
+          mkdir -p reports
+          pytest tests/unit -o junit_suite_name=unitarias \
+            --cov=app --cov-report=xml:reports/coverage-unit.xml \
+            --junitxml=reports/junit-unit.xml -q
+      - uses: dorny/test-reporter@v1
+        if: always()
+        continue-on-error: true
+        with:
+          name: Resultados unitarias
+          path: reports/junit-unit.xml
+          reporter: java-junit
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: unit-results
+          path: |
+            reports/junit-unit.xml
+            reports/coverage-unit.xml
+            .coverage.unit
+          include-hidden-files: true
+          retention-days: 7
+
+  # ═══ 3. Pruebas de integración (SQLite en memoria) ════════════════════════════
+  integration:
+    name: Pruebas de integración
+    needs: unit
+    runs-on: ubuntu-latest
+    env:
+      COVERAGE_FILE: .coverage.int
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: pytest (integration)
+        run: |
+          mkdir -p reports
+          pytest tests/integration -o junit_suite_name=integracion \
+            --cov=app --cov-report=xml:reports/coverage-int.xml \
+            --junitxml=reports/junit-integration.xml -q
+      - uses: dorny/test-reporter@v1
+        if: always()
+        continue-on-error: true
+        with:
+          name: Resultados integración
+          path: reports/junit-integration.xml
+          reporter: java-junit
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: integration-results
+          path: |
+            reports/junit-integration.xml
+            reports/coverage-int.xml
+            .coverage.int
+          include-hidden-files: true
+          retention-days: 7
+
+  # ═══ 4. Seguridad estática (Bandit) ═══════════════════════════════════════════
+  static_security:
+    name: Seguridad estática (Bandit)
+    needs: integration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: Analizar con Bandit
+        run: |
+          mkdir -p reports
+          bandit -r app -f json -o reports/bandit.json || true
+          bandit -r app || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bandit-report
+          path: reports/bandit.json
+          retention-days: 7
+
+  # ═══ 5. SonarCloud (cobertura combinada) ══════════════════════════════════════
+  sonarqube:
+    name: SonarCloud
+    needs: [unit, integration, static_security]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install coverage
+      - uses: actions/download-artifact@v4
+        with:
+          name: unit-results
+          path: art-unit
+        continue-on-error: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: integration-results
+          path: art-int
+        continue-on-error: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: bandit-report
+          path: reports
+        continue-on-error: true
+      - name: Combinar cobertura + junit
+        run: |
+          mkdir -p reports
+          cp art-unit/reports/junit-unit.xml reports/ 2>/dev/null || true
+          cp art-int/reports/junit-integration.xml reports/ 2>/dev/null || true
+          cp art-unit/.coverage.unit . 2>/dev/null || true
+          cp art-int/.coverage.int . 2>/dev/null || true
+          coverage combine .coverage.unit .coverage.int || true
+          coverage xml -o reports/coverage.xml || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-report
+          path: reports/coverage.xml
+          retention-days: 7
+      - uses: SonarSource/sonarqube-scan-action@v4
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+  # ═══ 6. DAST (OWASP ZAP) contra preprod local ════════════════════════════════
+  cd_dast:
+    name: DAST (OWASP ZAP)
+    needs: integration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Levantar preprod (compose)
+        run: |
+          docker compose up -d --build
+          for i in $(seq 1 30); do docker compose exec -T db pg_isready -U ecommerce >/dev/null 2>&1 && break; sleep 2; done
+          docker compose exec -T api alembic upgrade head
+          docker compose exec -T api python -m app.seed || echo "seed admin opcional"
+          docker compose exec -T api python -m app.seed_products
+          for i in $(seq 1 30); do curl -sf http://localhost:8000/health >/dev/null && break; sleep 2; done
+          curl -sf http://localhost:8000/health
+      - name: OWASP ZAP (DAST)
+        uses: zaproxy/action-baseline@master
+        continue-on-error: true
+        with:
+          target: http://172.17.0.1:8000
+          rules_file_name: .zap/rules.tsv
+          fail_action: true
+          allow_issue_writing: false
+          token: ${{ secrets.GITHUB_TOKEN }}
+          cmd_options: "-a"
+      - name: Apagar preprod
+        if: always()
+        run: docker compose down -v
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cd-dast
+          path: |
+            report_json.json
+            report_html.html
+            report_md.md
+          retention-days: 7
+
+  # ═══ 7. Rendimiento (Locust) contra preprod local ═════════════════════════════
+  cd_perf:
+    name: Rendimiento (Locust)
+    needs: integration
+    runs-on: ubuntu-latest
+    env:
+      PERF_MAX_P95_MS: "1500"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Levantar preprod (compose)
+        run: |
+          docker compose up -d --build
+          for i in $(seq 1 30); do docker compose exec -T db pg_isready -U ecommerce >/dev/null 2>&1 && break; sleep 2; done
+          docker compose exec -T api alembic upgrade head
+          docker compose exec -T api python -m app.seed || echo "seed admin opcional"
+          docker compose exec -T api python -m app.seed_products
+          for i in $(seq 1 30); do curl -sf http://localhost:8000/health >/dev/null && break; sleep 2; done
+          curl -sf http://localhost:8000/health
+      
+      - name: Instalar Locust
+        run: |
+          pip install -e ".[perf]"
+          mkdir -p reports
+      
+      - name: "Prueba 1: Rendimiento estándar (100 visitantes)"
+        continue-on-error: true
+        run: |
+          locust -f perf/locustfile.py VisitanteTienda --headless -u 100 -r 20 --run-time 60s \
+            --host http://localhost:8000 --csv reports/locust-standard --html reports/locust-standard.html || true
+      
+      - name: "Prueba 2: Checkout bajo carga (20 compradores)"
+        continue-on-error: true
+        run: |
+          locust -f perf/locustfile.py Comprador --headless -u 20 -r 5 --run-time 60s \
+            --host http://localhost:8000 --csv reports/locust-checkout --html reports/locust-checkout.html || true
+      
+      - name: "Prueba 3: Admin CRUD (15 administradores)"
+        continue-on-error: true
+        run: |
+          locust -f perf/locustfile.py UsuarioAutenticado --headless -u 15 -r 3 --run-time 60s \
+            --host http://localhost:8000 --csv reports/locust-admin --html reports/locust-admin.html || true
+      
+      - name: "Prueba 4: Estrés combinado (200 usuarios mixtos)"
+        continue-on-error: true
+        run: |
+          locust -f perf/locustfile.py --headless -u 200 -r 40 --run-time 90s \
+            --host http://localhost:8000 --csv reports/locust-stress --html reports/locust-stress.html || true
+      
+      - name: Validar gate P95 (prueba estándar)
+        continue-on-error: true
+        run: |
+          python - <<'PY'
+          import csv, os, sys
+          p95 = None
+          with open("reports/locust-standard_stats.csv") as fh:
+              for row in csv.DictReader(fh):
+                  if row.get("Name", "").strip() == "Aggregated":
+                      for k in ("95%", "95%ile"):
+                          if row.get(k):
+                              p95 = float(row[k]); break
+          limit = float(os.environ["PERF_MAX_P95_MS"])
+          print(f"\n✓ P95 mediana (standard): {p95} ms (límite {limit} ms)")
+          if p95 is None:
+              sys.exit("No se pudo leer el p95 de Locust")
+          sys.exit(0 if p95 <= limit else f"P95 {p95} ms supera el límite {limit} ms")
+          PY
+      
+      - name: Generar resumen HTML de todas las pruebas
+        if: always()
+        continue-on-error: true
+        run: |
+          python perf/generate_report.py reports reports/index.html
+          echo "✓ Reportes HTML disponibles en reports/"
+      
+      - name: Apagar preprod
+        if: always()
+        run: docker compose down -v
+      
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cd-perf
+          path: reports/
+          retention-days: 7
+
+  # ═══ 8. PROD · Publicar imagen GHCR (solo main) ═══════════════════════════════
+  publish_image:
+    name: Publicar imagen (GHCR)
+    needs: [lint, unit, integration, static_security]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}:latest
+            ghcr.io/${{ github.repository }}:${{ github.sha }}
+
+  # ═══ 9. PROD · Smoke test contra producción (solo main) ═══════════════════════
+  deploy_smoke:
+    name: Smoke test (producción)
+    needs: publish_image
+    if: ${{ !cancelled() && needs.publish_image.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Health check (Render)
+        run: |
+          URL="https://ecommerce-backend-8ckl.onrender.com/health"
+          for i in $(seq 1 30); do
+            if curl -sf "$URL" >/dev/null; then echo "✅ Producción saludable"; exit 0; fi
+            echo "esperando despliegue... ($i)"; sleep 10
+          done
+          echo "❌ El backend de producción no respondió"; exit 1
+
+  # ═══ 10. Dashboard acumulativo ════════════════════════════════════════════════
+  dashboard:
+    name: Dashboard de resultados
+    needs: [lint, unit, integration, static_security, sonarqube, cd_dast, cd_perf]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          path: dashboard-artifacts
+        continue-on-error: true
+      - name: Construir dashboard
+        env:
+          PIPELINE_FLOW: full
+        run: |
+          mkdir -p dashboard
+          python ci/build_dashboard.py \
+            --input dashboard-artifacts \
+            --html-out dashboard/index.html \
+            --md-out dashboard/summary.md
+          cat dashboard/summary.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dashboard-html
+          path: dashboard
+          retention-days: 30
+      - name: Preparar artefacto de Pages
+        continue-on-error: true
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dashboard
+
+  # ═══ 11. Publicar dashboard en GitHub Pages ════════════════════════════════════
+  publish_pages:
+    name: Publicar dashboard (Pages)
+    needs: dashboard
+    if: ${{ always() && needs.dashboard.result == 'success' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/')) }}
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        continue-on-error: true
+        uses: actions/deploy-pages@v4

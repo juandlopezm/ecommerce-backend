@@ -1,5 +1,9 @@
 # ecommerce-backend
 
+![CI Backend](https://github.com/juandlopezm/ecommerce-backend/actions/workflows/ci.yml/badge.svg)
+![Cobertura](https://raw.githubusercontent.com/juandlopezm/ecommerce-backend/python-coverage-comment-action-data/badge.svg)
+[![codecov](https://codecov.io/gh/juandlopezm/ecommerce-backend/branch/main/graph/badge.svg)](https://codecov.io/gh/juandlopezm/ecommerce-backend)
+
 API REST del e-commerce de productos de belleza (MVP). Backend desacoplado consumido por los clientes
 web y móvil. Construido siguiendo la especificación de `ESP.docx`.
 
@@ -54,11 +58,43 @@ Documentación interactiva en `http://localhost:8000/docs`.
 
 ## Pruebas QA
 
+Las pruebas están separadas por tipo:
+
+- `tests/unit/` — **unitarias puras** (sin BD): lógica de servicios, seguridad, pagos y entidades
+  (usan dobles/fakes de `tests/fakes.py`).
+- `tests/integration/` — **integración**: endpoints HTTP, repositorios SQLAlchemy y dependencias
+  (usan base de datos real: SQLite en memoria o PostgreSQL si se define `TEST_DATABASE_URL`).
+
 ```bash
-pytest                # ejecuta las pruebas con cobertura (umbral 80%)
-ruff check .          # linting
-black --check .       # formato
-mypy app              # tipos
+pytest tests/unit         # solo unitarias (rápido)
+pytest                    # suite completa (unit + integración)
+ruff check . && black --check . && mypy app
+```
+
+El **gate de cobertura ≥ 80%** se aplica en la CI al mergear (no en cada corrida local).
+
+## Integración Continua (CI/CD)
+
+Pipeline en GitHub Actions (`.github/workflows/ci.yml`), por capas:
+
+| Disparador | Qué corre |
+|---|---|
+| **Cada commit** (local, hook `pre-commit`) | ruff + black + unitarias |
+| **Cada push / PR** | `lint` (ruff/black/mypy) + `unit` (unitarias + cobertura) |
+| **PR a `develop`/`main` y push a esas ramas** | `integration` = suite completa contra **PostgreSQL** + **gate cobertura ≥ 80%** |
+
+Métricas: artefactos de cobertura (`coverage.xml` + HTML), **comentario de cobertura en el PR**
+(py-cov-action), **Codecov**, y un check de tests aprobados/fallidos (test-reporter).
+
+**Criterios de aceptación (branch protection en `develop`/`main`):** para mergear se exige PR y que
+pasen `lint`, `unit` e `integration` (cobertura ≥ 80%). Si una prueba falla, se corrige en la rama
+`feature/*` y se vuelve a pushear — no se mergea hasta estar en verde.
+
+Hooks locales (una sola vez):
+
+```bash
+pip install -e ".[dev]"
+pre-commit install        # ahora cada `git commit` corre ruff + black + unitarias
 ```
 
 ## Autenticación (RF-07)

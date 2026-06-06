@@ -40,9 +40,11 @@ def create_access_token(
     expires_delta: timedelta | None = None,
 ) -> str:
     """Genera un JWT firmado con el ``subject`` (email), el ``role`` y la expiración."""
-    expire = datetime.now(UTC) + (
-        expires_delta or timedelta(minutes=settings.access_token_expire_minutes)
-    )
+    # Nota: se usa `is None` (no `or`) porque timedelta(0) es falsy y un `or` lo descartaría,
+    # ignorando una expiración cero válida.
+    if expires_delta is None:
+        expires_delta = timedelta(minutes=settings.access_token_expire_minutes)
+    expire = datetime.now(UTC) + expires_delta
     payload: dict[str, Any] = {"sub": subject, "role": role, "exp": expire}
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
