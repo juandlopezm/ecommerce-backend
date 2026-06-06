@@ -35,6 +35,22 @@ class FileCov:
     filename: str
     line_pct: float
     branch_pct: float | None = None
+    lines_covered: int = 0
+    lines_valid: int = 0
+    @property
+    def lines_missed(self): return self.lines_valid - self.lines_covered
+
+@dataclass
+class SecFinding:
+    tool: str  # "bandit" | "zap"
+    title: str
+    severity: str
+    desc: str = ""
+    solution: str = ""
+    filename: str = ""
+    line: int = 0
+    count: int = 1
+    instances: list[dict] = field(default_factory=list)
 
 @dataclass
 class Report:
@@ -44,6 +60,7 @@ class Report:
     cov_source: str = ""
     bandit: dict[str, int] = field(default_factory=dict)
     zap: dict[str, int] = field(default_factory=dict)
+    sec_findings: list[SecFinding] = field(default_factory=list)
     perf_p95: float | None = None
     perf_files: list[str] = field(default_factory=list)
     suites_cov: dict[str, float] = field(default_factory=dict)
@@ -100,8 +117,13 @@ def parse_coverage(root, rep):
                     clr = cls.get("line-rate")
                     cbr = cls.get("branch-rate")
                     if fn and clr:
+                        total = cov = 0
+                        for ln in cls.iter("line"):
+                            total += 1
+                            if int(ln.get("hits", 0)) > 0: cov += 1
                         fc = FileCov(filename=fn, line_pct=round(float(clr)*100, 1),
-                                     branch_pct=round(float(cbr)*100, 1) if cbr else None)
+                                     branch_pct=round(float(cbr)*100, 1) if cbr else None,
+                                     lines_covered=cov, lines_valid=total)
                         key = _COV_SUITES.get(fname, "combinada")
                         rep.files_cov.setdefault(key, []).append(fc)
         except Exception as e:
@@ -136,7 +158,8 @@ def parse_lcov(root, rep):
                 for fn, (total, hits) in file_lines.items():
                     if total:
                         rep.files_cov.setdefault("lcov", []).append(
-                            FileCov(filename=fn, line_pct=round(hits/total*100, 1)))
+                            FileCov(filename=fn, line_pct=round(hits/total*100, 1),
+                                    lines_covered=hits, lines_valid=total))
             return
         except Exception as e:
             rep.notes.append(f"lcov.info: {e}")
@@ -148,6 +171,14 @@ def parse_bandit(root, rep):
             for issue in data.get("results", []):
                 k = (issue.get("issue_severity") or "UNDEFINED").upper()
                 rep.bandit[k] = rep.bandit.get(k, 0) + 1
+                rep.sec_findings.append(SecFinding(
+                    tool="bandit",
+                    title=issue.get("test_name", issue.get("issue_text", "unknown")),
+                    severity=k,
+                    desc=issue.get("issue_text", ""),
+                    filename=issue.get("filename", ""),
+                    line=int(issue.get("line_number", 0) or 0),
+                ))
             return
         except Exception as e:
             rep.notes.append(f"bandit.json: {e}")
@@ -163,6 +194,16 @@ def parse_zap(root, rep):
                 for alert in site.get("alerts", []):
                     k = _risk.get(str(alert.get("riskcode","0")), "INFO")
                     rep.zap[k] = rep.zap.get(k, 0) + 1
+                    instances = alert.get("instances", [])
+                    rep.sec_findings.append(SecFinding(
+                        tool="zap",
+                        title=alert.get("alert", alert.get("name", "unknown")),
+                        severity=k,
+                        desc=alert.get("desc", ""),
+                        solution=alert.get("solution", ""),
+                        count=len(instances),
+                        instances=instances,
+                    ))
             return
         except Exception as e:
             rep.notes.append(f"zap.json: {e}")
@@ -393,20 +434,62 @@ def render_html(rep: Report) -> str:
             rows += f'<div class="sec-row"><span>{k}</span><span style="color:{color};font-weight:500;">{v}</span></div>'
         return rows
 
+    def finding_card(f):
+        sev_color = {"HIGH":"#ef4444","MEDIUM":"#f59e0b","LOW":"#94a3b8","INFO":"#64748b"}.get(f.severity, "#64748b")
+        badge = f'<span style="display:inline-block;padding:1px 8px;border-radius:999px;font-size:10px;font-weight:600;background:{sev_color}20;color:{sev_color};">{f.severity}</span>'
+        loc = ""
+        if f.filename:
+            loc = f'<span style="color:#64748b;font-size:12px;">{e(f.filename)}:{f.line}</span>'
+        elif f.count > 1:
+            loc = f'<span style="color:#64748b;font-size:12px;">{f.count} instancias</span>'
+        inst_html = ""
+        for inst in f.instances[:5]:
+            uri = inst.get("uri", "")
+            method = inst.get("method", "")
+            inst_html += f'<div style="padding:4px 8px;background:#0f172a;border-radius:4px;margin:4px 0;font-size:12px;word-break:break-all;"><code style="background:transparent;padding:0;color:#64748b;">{e(method)}</code> {e(uri)}</div>'
+        if len(f.instances) > 5:
+            inst_html += f'<div style="color:#64748b;font-size:11px;padding:4px 8px;">... y {len(f.instances)-5} más</div>'
+        desc = f.desc[:300] + ("…" if len(f.desc) > 300 else "") if f.desc else ""
+        desc = desc.replace("<p>", "").replace("</p>", "").replace("<br>", "\n")
+        sol = f.solution[:200] + ("…" if len(f.solution) > 200 else "") if f.solution else ""
+        sol = sol.replace("<p>", "").replace("</p>", "").replace("<br>", "\n")
+
+        return f"""
+        <details class="sec-detail" style="margin-bottom:8px;">
+          <summary style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:10px 12px;background:#1e293b;border:1px solid #334155;border-radius:8px;font-size:13px;">
+            <span style="flex:1;">{e(f.title[:80])}</span>
+            {badge}{loc}
+          </summary>
+          <div style="padding:12px;background:#0f172a;border:1px solid #334155;border-top:none;border-radius:0 0 8px 8px;font-size:13px;">
+            {f'<div style="margin-bottom:8px;color:#94a3b8;">{e(desc)}</div>' if desc else ''}
+            {f'<div style="margin-bottom:8px;"><span style="color:#10b981;">Solución:</span> <span style="color:#94a3b8;">{e(sol)}</span></div>' if sol else ''}
+            {f'<div><span style="color:#f59e0b;">Instancias:</span>{inst_html}</div>' if inst_html else ''}
+          </div>
+        </details>"""
+
+    findings_bandit = [f for f in rep.sec_findings if f.tool == "bandit"]
+    findings_zap = [f for f in rep.sec_findings if f.tool == "zap"]
+
     tab_seguridad = f"""
     <div class="tab-content" id="tab-seguridad" style="display:none;">
       <div class="security-grid">
         <div class="sec-card">
-          <div class="sec-title">SAST · Bandit</div>
+          <div class="sec-title">SAST · Bandit ({sum(rep.bandit.values())} hallazgos)</div>
           {sec_list(rep.bandit, ["HIGH","MEDIUM","LOW"], "Sin hallazgos")}
+          <div style="margin-top:10px;max-height:500px;overflow-y:auto;">
+            {''.join(finding_card(f) for f in findings_bandit)}
+          </div>
         </div>
         <div class="sec-card">
-          <div class="sec-title">DAST · ZAP</div>
-          {sec_list(rep.zap, ["HIGH","MEDIUM","LOW","INFO"], "Solo en flujo CD")}
+          <div class="sec-title">DAST · ZAP ({sum(rep.zap.values())} alertas)</div>
+          {sec_list(rep.zap, ["HIGH","MEDIUM","LOW","INFO"], "Sin alertas")}
+          <div style="margin-top:10px;max-height:500px;overflow-y:auto;">
+            {''.join(finding_card(f) for f in findings_zap)}
+          </div>
         </div>
         <div class="sec-card">
           <div class="sec-title">SonarCloud</div>
-          <div style="font-size:13px;color:#94a3b8;">Análisis enviado en flujo CI.</div>
+          <div style="font-size:13px;color:#94a3b8;">Análisis enviado en CI.</div>
         </div>
       </div>
     </div>"""
@@ -444,35 +527,58 @@ def render_html(rep: Report) -> str:
         files = rep.files_cov.get(key)
         if not files: return ""
         rows = ""
+        t_cov = t_valid = 0
         for f in sorted(files, key=lambda x: x.filename):
             lc = f.line_pct
             bc = f.branch_pct
             lcol = "#10b981" if lc >= 70 else "#f59e0b" if lc >= 50 else "#ef4444"
+            t_cov += f.lines_covered; t_valid += f.lines_valid
             rows += f"""
             <tr>
               <td style="padding:6px 12px;color:#e2e8f0;font-size:13px;font-family:monospace;">{e(f.filename)}</td>
               <td style="padding:6px 12px;text-align:right;font-weight:600;color:{lcol};font-size:13px;">{lc:.1f}%</td>
-              <td style="padding:6px 12px;width:160px;">
+              <td style="padding:6px 12px;width:140px;">
                 <div style="height:6px;background:#334155;border-radius:3px;overflow:hidden;">
                   <div style="width:{lc}%;height:100%;background:{lcol};border-radius:3px;"></div>
                 </div>
               </td>
+              <td style="padding:6px 12px;text-align:right;color:#e2e8f0;font-size:13px;">{f.lines_covered}</td>
+              <td style="padding:6px 12px;text-align:right;color:#94a3b8;font-size:13px;">{f.lines_valid}</td>
+              <td style="padding:6px 12px;text-align:right;color:{'#10b981' if f.lines_missed==0 else '#ef4444'};font-size:13px;">{f.lines_missed}</td>
               <td style="padding:6px 12px;text-align:right;font-size:13px;color:{'#10b981' if (bc or 0) >= 70 else '#f59e0b' if (bc or 0) >= 50 else '#ef4444' if bc is not None else '#64748b'};">{f'{bc:.1f}%' if bc is not None else '—'}</td>
+            </tr>"""
+        t_pct = round(t_cov / t_valid * 100, 1) if t_valid else 0
+        totals = f"""
+            <tr style="background:#0f172a;border-top:2px solid #334155;">
+              <td style="padding:8px 12px;font-weight:600;color:#e2e8f0;font-size:13px;">TOTAL</td>
+              <td style="padding:8px 12px;text-align:right;font-weight:700;color:{'#10b981' if t_pct>=70 else '#f59e0b'};font-size:13px;">{t_pct:.1f}%</td>
+              <td style="padding:8px 12px;width:140px;">
+                <div style="height:8px;background:#334155;border-radius:4px;overflow:hidden;">
+                  <div style="width:{t_pct}%;height:100%;background:{'#10b981' if t_pct>=70 else '#f59e0b' if t_pct>=50 else '#ef4444'};border-radius:4px;"></div>
+                </div>
+              </td>
+              <td style="padding:8px 12px;text-align:right;font-weight:600;color:#e2e8f0;font-size:13px;">{t_cov}</td>
+              <td style="padding:8px 12px;text-align:right;font-weight:600;color:#e2e8f0;font-size:13px;">{t_valid}</td>
+              <td style="padding:8px 12px;text-align:right;font-weight:600;color:{'#10b981' if t_valid-t_cov==0 else '#ef4444'};font-size:13px;">{t_valid-t_cov}</td>
+              <td style="padding:8px 12px;"></td>
             </tr>"""
         return f"""
         <div style="margin-bottom:20px;">
-          <div style="font-size:14px;font-weight:500;color:#e2e8f0;margin-bottom:10px;">{e(title)} <span style="font-weight:400;color:#64748b;">({len(files)} archivos)</span></div>
+          <div style="font-size:14px;font-weight:500;color:#e2e8f0;margin-bottom:10px;">{e(title)} <span style="font-weight:400;color:#64748b;">({len(files)} archivos, {t_valid} líneas)</span></div>
           <div style="overflow-x:auto;">
           <table style="width:100%;border-collapse:collapse;background:#1e293b;border-radius:8px;overflow:hidden;">
             <thead>
               <tr style="background:#0f172a;">
                 <th style="padding:8px 12px;text-align:left;font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.05em;">Archivo</th>
-                <th style="padding:8px 12px;text-align:right;font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.05em;">Líneas</th>
-                <th style="padding:8px 12px;width:160px;"></th>
+                <th style="padding:8px 12px;text-align:right;font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.05em;">Cobertura</th>
+                <th style="padding:8px 12px;width:140px;"></th>
+                <th style="padding:8px 12px;text-align:right;font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.05em;">Cubiertas</th>
+                <th style="padding:8px 12px;text-align:right;font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.05em;">Totales</th>
+                <th style="padding:8px 12px;text-align:right;font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.05em;">Faltantes</th>
                 <th style="padding:8px 12px;text-align:right;font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.05em;">Ramas</th>
               </tr>
             </thead>
-            <tbody>{rows}</tbody>
+            <tbody>{rows}{totals}</tbody>
           </table>
           </div>
         </div>"""
@@ -534,6 +640,10 @@ def render_html(rep: Report) -> str:
   .sec-card {{ background:#1e293b; border:1px solid #334155; border-radius:12px; padding:16px 20px; }}
   .sec-title {{ font-size:12px; font-weight:500; color:#94a3b8; text-transform:uppercase; letter-spacing:.06em; margin-bottom:10px; }}
   .sec-row {{ display:flex; justify-content:space-between; font-size:13px; padding:6px 0; border-bottom:1px solid #1e293b; }}
+  .sec-detail summary {{ list-style:none; }}
+  .sec-detail summary::-webkit-details-marker {{ display:none; }}
+  .sec-detail summary::after {{ content:"▶"; margin-left:auto; color:#64748b; font-size:10px; transition:transform .15s; }}
+  .sec-detail[open] summary::after {{ transform:rotate(90deg); }}
   .perf-grid {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:12px; }}
   .perf-card {{ display:block; background:#1e293b; border:1px solid #334155; border-radius:12px; padding:16px 20px; text-decoration:none; color:inherit; border-left:3px solid #0ea5e9; transition:transform .15s,background .15s; }}
   .perf-card:hover {{ background:#334155; transform:translateY(-2px); }}
