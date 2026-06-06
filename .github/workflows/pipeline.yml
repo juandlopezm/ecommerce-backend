@@ -399,8 +399,10 @@ jobs:
       
       - name: Generar resumen HTML de todas las pruebas
         if: always()
+        continue-on-error: true
         run: |
-          python perf/generate_report.py reports reports/perf_dashboard.html
+          python perf/generate_report.py reports reports/index.html
+          echo "✓ Reportes HTML disponibles en reports/"
       
       - name: Apagar preprod
         if: always()
