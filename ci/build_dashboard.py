@@ -28,7 +28,7 @@ import os
 import sys
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 # Salida UTF-8 robusta (los emojis fallan en consolas Windows cp1252; en runners Linux es UTF-8).
 try:
@@ -176,9 +176,7 @@ def parse_karate(root: str, rep: Report) -> None:
         try:
             data = json.load(open(path, encoding="utf-8-sig"))
             passed = int(data.get("scenariosPassed", 0) or 0)
-            failed = int(
-                data.get("scenariosFailed", data.get("scenariosfailed", 0)) or 0
-            )
+            failed = int(data.get("scenariosFailed", data.get("scenariosfailed", 0)) or 0)
             rep.suites.append(
                 SuiteResult(
                     name="Karate (API, caja negra)",
@@ -237,7 +235,12 @@ def render_markdown(rep: Report) -> str:
     lines.append("")
 
     if rep.suites:
-        lines += ["### Suites", "", "| Suite | Estado | ✓ | ✗ | ⤼ | Total | Tiempo |", "|---|---|--:|--:|--:|--:|--:|"]
+        lines += [
+            "### Suites",
+            "",
+            "| Suite | Estado | ✓ | ✗ | ⤼ | Total | Tiempo |",
+            "|---|---|--:|--:|--:|--:|--:|",
+        ]
         for s in rep.suites:
             lines.append(
                 f"| {s.name} | {_badge(s.ok)} | {s.passed} | {s.failures + s.errors} "
@@ -267,18 +270,21 @@ def render_html(rep: Report) -> str:
     ref = os.environ.get("GITHUB_REF_NAME", "")
     repo = os.environ.get("GITHUB_REPOSITORY", "")
     flow = os.environ.get("PIPELINE_FLOW", "")
-    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    ts = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
 
     def esc(x: object) -> str:
         return html.escape(str(x))
 
-    rows = "".join(
-        f"<tr class='{'ok' if s.ok else 'bad'}'><td>{esc(s.name)}</td>"
-        f"<td>{'✅' if s.ok else '❌'}</td><td>{s.passed}</td>"
-        f"<td>{s.failures + s.errors}</td><td>{s.skipped}</td>"
-        f"<td>{s.tests}</td><td>{s.time:.1f}s</td></tr>"
-        for s in rep.suites
-    ) or "<tr><td colspan='7'>Sin suites reportadas</td></tr>"
+    rows = (
+        "".join(
+            f"<tr class='{'ok' if s.ok else 'bad'}'><td>{esc(s.name)}</td>"
+            f"<td>{'✅' if s.ok else '❌'}</td><td>{s.passed}</td>"
+            f"<td>{s.failures + s.errors}</td><td>{s.skipped}</td>"
+            f"<td>{s.tests}</td><td>{s.time:.1f}s</td></tr>"
+            for s in rep.suites
+        )
+        or "<tr><td colspan='7'>Sin suites reportadas</td></tr>"
+    )
 
     cov = ""
     if rep.coverage_pct is not None:
@@ -298,7 +304,10 @@ def render_html(rep: Report) -> str:
 
     perf = ""
     if rep.perf_p95_ms is not None:
-        perf = f"<div class='metric'><h3>Rendimiento</h3><p>p95: <b>{rep.perf_p95_ms:.0f} ms</b></p></div>"
+        perf = (
+            "<div class='metric'><h3>Rendimiento</h3>"
+            f"<p>p95: <b>{rep.perf_p95_ms:.0f} ms</b></p></div>"
+        )
 
     notes = ""
     if rep.notes:
@@ -306,6 +315,12 @@ def render_html(rep: Report) -> str:
 
     status_txt = "PASÓ" if overall_ok else "FALLÓ"
     status_cls = "ok" if overall_ok else "bad"
+
+    metrics_html = (
+        f"{cov}{perf}"
+        f"{kv_block('SAST · Bandit', rep.bandit)}"
+        f"{kv_block('DAST · ZAP', rep.zap)}"
+    )
 
     return f"""<!DOCTYPE html>
 <html lang="es"><head><meta charset="utf-8">
@@ -349,7 +364,7 @@ def render_html(rep: Report) -> str:
   </div>
 </header>
 <main>
-  <div class="metrics">{cov}{perf}{kv_block('SAST · Bandit', rep.bandit)}{kv_block('DAST · ZAP', rep.zap)}</div>
+  <div class="metrics">{metrics_html}</div>
   <table>
     <thead><tr><th>Suite</th><th>Estado</th><th>✓</th><th>✗</th><th>⤼</th><th>Total</th><th>Tiempo</th></tr></thead>
     <tbody>{rows}</tbody>
