@@ -266,9 +266,9 @@ jobs:
           SONAR_PROJECT_KEY: ${{ secrets.SONAR_PROJECT_KEY }}
           SONAR_ORGANIZATION: ${{ secrets.SONAR_ORGANIZATION }}
 
-  # ═══ 7. CD · Preprod en Docker + caja negra/DAST/perf (gates estrictos) ══════
-  preprod-test:
-    name: Preprod + Karate + ZAP + Perf
+  # ═══ 7a. CD · Caja negra de API (Schemathesis desde OpenAPI) ═════════════════
+  cd-api-blackbox:
+    name: Caja negra API (Schemathesis)
     needs: route
     if: needs.route.outputs.flow == 'cd'
     runs-on: ubuntu-latest
@@ -277,49 +277,53 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-
-      - name: Levantar preprod (docker compose) + migrar + sembrar
+      - name: Levantar preprod (compose + migrar + sembrar + /health)
         run: |
           docker compose up -d --build
-          echo "Esperando a PostgreSQL..."
-          for i in $(seq 1 30); do
-            if docker compose exec -T db pg_isready -U ecommerce >/dev/null 2>&1; then break; fi
-            sleep 2
-          done
+          for i in $(seq 1 30); do docker compose exec -T db pg_isready -U ecommerce >/dev/null 2>&1 && break; sleep 2; done
           docker compose exec -T api alembic upgrade head
           docker compose exec -T api python -m app.seed || echo "seed admin opcional"
           docker compose exec -T api python -m app.seed_products
-
-      - name: Esperar API /health
-        run: |
-          for i in $(seq 1 30); do
-            if curl -sf http://localhost:8000/health >/dev/null; then echo "API lista"; break; fi
-            echo "esperando API ($i)..."; sleep 2
-          done
+          for i in $(seq 1 30); do curl -sf http://localhost:8000/health >/dev/null && break; sleep 2; done
           curl -sf http://localhost:8000/health
-
-      # ── Caja negra / API funcional (Karate) ──────────────────────────────────
-      - name: Karate (caja negra)
-        id: karate
-        continue-on-error: true
+      - name: Schemathesis (genera casos desde /openapi.json)
         run: |
-          KARATE_VERSION=1.4.1
-          curl -sSL -o karate.jar \
-            "https://github.com/karatelabs/karate/releases/download/v${KARATE_VERSION}/karate-${KARATE_VERSION}.jar"
-          # El JAR standalone busca karate-config.js en el DIRECTORIO ACTUAL, por eso entramos
-          # en karate/. Las props -D de la JVM van ANTES de -jar (si no Karate las toma como args).
-          cd karate
-          java -DbaseUrl=http://localhost:8000 -jar "$GITHUB_WORKSPACE/karate.jar" .
+          pip install "schemathesis>=3.19,<4"
+          mkdir -p reports
+          # Check por defecto (not_a_server_error): falla solo ante 5xx (crash real).
+          # Los 4xx por fuzzing (422/429) NO rompen el build.
+          schemathesis run http://localhost:8000/openapi.json \
+            --hypothesis-max-examples=20 \
+            --junit-xml=reports/junit-schemathesis.xml
+      - name: Apagar preprod
+        if: always()
+        run: docker compose down -v
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cd-apitest
+          path: reports/
+          retention-days: 7
 
-      # ── DAST (OWASP ZAP baseline). El contenedor ZAP alcanza el host por el
-      #    gateway del bridge (172.17.0.1), donde compose publica el puerto 8000. ─
+  # ═══ 7b. CD · DAST (OWASP ZAP baseline) ══════════════════════════════════════
+  cd-dast:
+    name: DAST (OWASP ZAP)
+    needs: route
+    if: needs.route.outputs.flow == 'cd'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Levantar preprod (compose + migrar + sembrar + /health)
+        run: |
+          docker compose up -d --build
+          for i in $(seq 1 30); do docker compose exec -T db pg_isready -U ecommerce >/dev/null 2>&1 && break; sleep 2; done
+          docker compose exec -T api alembic upgrade head
+          docker compose exec -T api python -m app.seed || echo "seed admin opcional"
+          docker compose exec -T api python -m app.seed_products
+          for i in $(seq 1 30); do curl -sf http://localhost:8000/health >/dev/null && break; sleep 2; done
+          curl -sf http://localhost:8000/health
+      # El contenedor ZAP alcanza el host por el gateway del bridge (172.17.0.1).
       - name: OWASP ZAP (DAST)
-        id: zap
-        continue-on-error: true
         uses: zaproxy/action-baseline@master
         with:
           target: http://172.17.0.1:8000
@@ -328,13 +332,42 @@ jobs:
           allow_issue_writing: false
           token: ${{ secrets.GITHUB_TOKEN }}
           cmd_options: "-a"
+      - name: Apagar preprod
+        if: always()
+        run: docker compose down -v
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cd-dast
+          path: |
+            report_json.json
+            report_html.html
+            report_md.md
+          retention-days: 7
 
-      # ── Rendimiento (Locust headless) ────────────────────────────────────────
-      - name: Perf (Locust)
-        id: perf
-        continue-on-error: true
-        env:
-          PERF_MAX_P95_MS: "1500" # umbral tunable (hallazgo previo ~2.3s a 100 usuarios)
+  # ═══ 7c. CD · Rendimiento (Locust headless, gate p95) ════════════════════════
+  cd-perf:
+    name: Rendimiento (Locust)
+    needs: route
+    if: needs.route.outputs.flow == 'cd'
+    runs-on: ubuntu-latest
+    env:
+      PERF_MAX_P95_MS: "1500" # umbral tunable (hallazgo previo ~2.3s a 100 usuarios)
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Levantar preprod (compose + migrar + sembrar + /health)
+        run: |
+          docker compose up -d --build
+          for i in $(seq 1 30); do docker compose exec -T db pg_isready -U ecommerce >/dev/null 2>&1 && break; sleep 2; done
+          docker compose exec -T api alembic upgrade head
+          docker compose exec -T api python -m app.seed || echo "seed admin opcional"
+          docker compose exec -T api python -m app.seed_products
+          for i in $(seq 1 30); do curl -sf http://localhost:8000/health >/dev/null && break; sleep 2; done
+          curl -sf http://localhost:8000/health
+      - name: Locust (headless) + gate p95
         run: |
           pip install -e ".[perf]"
           mkdir -p reports
@@ -355,39 +388,15 @@ jobs:
               sys.exit("No se pudo leer el p95 de Locust")
           sys.exit(0 if p95 <= limit else f"p95 {p95} ms supera el límite {limit} ms")
           PY
-
-      - name: Recopilar reportes de Karate
-        if: always()
-        run: |
-          mkdir -p reports
-          # Karate escribe en <cwd>/target → karate/target porque corrimos desde karate/.
-          cp -r karate/target/karate-reports reports/karate-reports 2>/dev/null || true
-
       - name: Apagar preprod
         if: always()
         run: docker compose down -v
-
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: cd-reports
-          path: |
-            reports/
-            report_json.json
-            report_html.html
-            report_md.md
+          name: cd-perf
+          path: reports/
           retention-days: 7
-
-      # ── Gate estricto: falla el build si CUALQUIER suite de CD falló ──────────
-      - name: Gate CD (estricto)
-        if: always()
-        run: |
-          fail=0
-          [ "${{ steps.karate.outcome }}" = "success" ] || { echo "❌ Karate falló"; fail=1; }
-          [ "${{ steps.zap.outcome }}" = "success" ]    || { echo "❌ ZAP (DAST) falló"; fail=1; }
-          [ "${{ steps.perf.outcome }}" = "success" ]   || { echo "❌ Perf (Locust) falló"; fail=1; }
-          [ "$fail" = "0" ] && echo "✅ Todos los gates de CD pasaron"
-          exit $fail
 
   # ═══ 8. DEPLOY · Publicar imagen GHCR ════════════════════════════════════════
   publish-image:
@@ -438,7 +447,9 @@ jobs:
         integration,
         coverage,
         sonarcloud,
-        preprod-test,
+        cd-api-blackbox,
+        cd-dast,
+        cd-perf,
         publish-image,
         deploy-smoke,
       ]
