@@ -310,8 +310,10 @@ jobs:
           KARATE_VERSION=1.4.1
           curl -sSL -o karate.jar \
             "https://github.com/karatelabs/karate/releases/download/v${KARATE_VERSION}/karate-${KARATE_VERSION}.jar"
-          # Las propiedades -D de la JVM van ANTES de -jar (si no, Karate las toma como argumentos suyos).
-          java -DbaseUrl=http://localhost:8000 -jar karate.jar karate/
+          # El JAR standalone busca karate-config.js en el DIRECTORIO ACTUAL, por eso entramos
+          # en karate/. Las props -D de la JVM van ANTES de -jar (si no Karate las toma como args).
+          cd karate
+          java -DbaseUrl=http://localhost:8000 -jar "$GITHUB_WORKSPACE/karate.jar" .
 
       # ── DAST (OWASP ZAP baseline). El contenedor ZAP alcanza el host por el
       #    gateway del bridge (172.17.0.1), donde compose publica el puerto 8000. ─
@@ -358,7 +360,8 @@ jobs:
         if: always()
         run: |
           mkdir -p reports
-          cp -r target/karate-reports reports/karate-reports 2>/dev/null || true
+          # Karate escribe en <cwd>/target → karate/target porque corrimos desde karate/.
+          cp -r karate/target/karate-reports reports/karate-reports 2>/dev/null || true
 
       - name: Apagar preprod
         if: always()
