@@ -310,7 +310,8 @@ jobs:
           KARATE_VERSION=1.4.1
           curl -sSL -o karate.jar \
             "https://github.com/karatelabs/karate/releases/download/v${KARATE_VERSION}/karate-${KARATE_VERSION}.jar"
-          java -jar karate.jar -DbaseUrl=http://localhost:8000 karate/
+          # Las propiedades -D de la JVM van ANTES de -jar (si no, Karate las toma como argumentos suyos).
+          java -DbaseUrl=http://localhost:8000 -jar karate.jar karate/
 
       # ── DAST (OWASP ZAP baseline). El contenedor ZAP alcanza el host por el
       #    gateway del bridge (172.17.0.1), donde compose publica el puerto 8000. ─
