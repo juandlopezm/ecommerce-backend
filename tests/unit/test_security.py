@@ -65,15 +65,10 @@ def test_empty_password_can_be_hashed_and_verified() -> None:
     assert verify_password("x", hashed) is False
 
 
-@pytest.mark.xfail(
-    reason="bug latente: 'expires_delta or default' ignora timedelta(0) por ser falsy",
-    strict=True,
-)
-def test_token_with_zero_expiry_should_use_zero_not_default() -> None:
-    # ⚠️ ESTE TEST FALLA — posible bug en el código
-    # Con expires_delta=timedelta(0) la expiración DEBERÍA ser ~ahora, pero create_access_token
-    # hace `expires_delta or timedelta(default)` y timedelta(0) es "falsy", así que lo reemplaza
-    # por la expiración por defecto (~60 min). Comprobamos el claim 'exp' sin validar expiración.
+def test_zero_expiry_is_respected_not_replaced_by_default() -> None:
+    # Regresión: con expires_delta=timedelta(0) la expiración debe ser ~ahora (no ~60 min).
+    # Antes fallaba por usar `expires_delta or default` (timedelta(0) es falsy); ya corregido
+    # con un `is None` explícito. Se revisa el claim 'exp' sin validar la expiración.
     token = create_access_token(subject="u@x.com", role="cliente", expires_delta=timedelta(0))
     payload = jwt.decode(
         token,

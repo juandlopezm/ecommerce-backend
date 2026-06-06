@@ -330,7 +330,7 @@ jobs:
             report_md.md
           retention-days: 7
 
-  # ═══ 8. STAGING · Rendimiento (Locust, gate p95) ══════════════════════════════
+  # ═══ 8. STAGING · Rendimiento (Locust con múltiples escenarios + gate p95) ═════
   cd_perf:
     name: Rendimiento (Locust)
     needs: [precheck, reuse_artifacts, integration]
@@ -352,30 +352,60 @@ jobs:
           docker compose exec -T api python -m app.seed_products
           for i in $(seq 1 30); do curl -sf http://localhost:8000/health >/dev/null && break; sleep 2; done
           curl -sf http://localhost:8000/health
-      - name: Locust (headless) + gate p95
+      
+      - name: Instalar Locust
         run: |
           pip install -e ".[perf]"
           mkdir -p reports
-          locust -f perf/locustfile.py --headless -u 100 -r 20 --run-time 60s \
-            --host http://localhost:8000 --csv reports/locust --html reports/locust.html
+      
+      - name: "Prueba 1: Rendimiento estándar (100 visitantes)"
+        run: |
+          locust -f perf/locustfile.py::VisitanteTienda --headless -u 100 -r 20 --run-time 60s \
+            --host http://localhost:8000 --csv reports/locust-standard --html reports/locust-standard.html
+      
+      - name: "Prueba 2: Checkout bajo carga (20 compradores)"
+        run: |
+          locust -f perf/locustfile.py::Comprador --headless -u 20 -r 5 --run-time 60s \
+            --host http://localhost:8000 --csv reports/locust-checkout --html reports/locust-checkout.html
+      
+      - name: "Prueba 3: Admin CRUD (15 administradores)"
+        run: |
+          locust -f perf/locustfile.py::UsuarioAutenticado --headless -u 15 -r 3 --run-time 60s \
+            --host http://localhost:8000 --csv reports/locust-admin --html reports/locust-admin.html
+      
+      - name: "Prueba 4: Estrés combinado (200 usuarios mixtos)"
+        continue-on-error: true
+        run: |
+          locust -f perf/locustfile.py --headless -u 200 -r 40 --run-time 90s \
+            --host http://localhost:8000 --csv reports/locust-stress --html reports/locust-stress.html || true
+      
+      - name: Validar gate P95 (prueba estándar)
+        run: |
           python - <<'PY'
           import csv, os, sys
           p95 = None
-          with open("reports/locust_stats.csv") as fh:
+          with open("reports/locust-standard_stats.csv") as fh:
               for row in csv.DictReader(fh):
                   if row.get("Name", "").strip() == "Aggregated":
                       for k in ("95%", "95%ile"):
                           if row.get(k):
                               p95 = float(row[k]); break
           limit = float(os.environ["PERF_MAX_P95_MS"])
-          print(f"p95={p95} ms (límite {limit} ms)")
+          print(f"\n✓ P95 mediana (standard): {p95} ms (límite {limit} ms)")
           if p95 is None:
               sys.exit("No se pudo leer el p95 de Locust")
-          sys.exit(0 if p95 <= limit else f"p95 {p95} ms supera el límite {limit} ms")
+          sys.exit(0 if p95 <= limit else f"P95 {p95} ms supera el límite {limit} ms")
           PY
+      
+      - name: Generar resumen HTML de todas las pruebas
+        if: always()
+        run: |
+          python perf/generate_report.py reports reports/perf_dashboard.html
+      
       - name: Apagar preprod
         if: always()
         run: docker compose down -v
+      
       - uses: actions/upload-artifact@v4
         if: always()
         with:
