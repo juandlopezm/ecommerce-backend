@@ -12,10 +12,27 @@ env/
 # Tests / coverage
 .pytest_cache/
 .coverage
+.coverage.*
 coverage.xml
 htmlcov/
 .mypy_cache/
 .ruff_cache/
+
+# Reportes generados por el pipeline (NO versionar; los .yml SÍ se versionan)
+reports/
+dashboard/
+dashboard-artifacts/
+report_json.json
+report_html.html
+report_md.md
+
+# Karate (caja negra)
+target/
+karate*.jar
+
+# SonarCloud scanner (cache local)
+.sonar/
+.scannerwork/
 
 # Entorno
 .env
