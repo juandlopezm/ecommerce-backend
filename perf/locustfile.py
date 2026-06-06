@@ -22,8 +22,8 @@ Uso (con el backend corriendo en http://localhost:8000):
 """
 
 import random
-import json
-from locust import HttpUser, between, task, events, constant
+
+from locust import HttpUser, between, constant, task
 
 
 class VisitanteTienda(HttpUser):
@@ -110,7 +110,6 @@ class Comprador(HttpUser):
             return
 
         product_id = random.choice(self.product_ids)
-        product = self.products.get(product_id, {})
         
         order_data = {
             "customer_name": f"Cliente {random.randint(1000, 9999)}",

@@ -8,9 +8,8 @@ Si no, crea un índice HTML que linke a los reportes HTML ya generados.
 
 import csv
 import sys
-from pathlib import Path
-from typing import Dict
 from dataclasses import dataclass
+from pathlib import Path
 
 
 @dataclass
@@ -25,7 +24,7 @@ class LocustStats:
     rps: float
 
 
-def parse_locust_csv(csv_path: str) -> Dict[str, LocustStats]:
+def parse_locust_csv(csv_path: str) -> dict[str, LocustStats]:
     """Parsea archivo CSV de stats de Locust."""
     stats = {}
     try:
@@ -54,7 +53,7 @@ def parse_locust_csv(csv_path: str) -> Dict[str, LocustStats]:
     return stats
 
 
-def find_html_reports(reports_dir: Path) -> Dict[str, Path]:
+def find_html_reports(reports_dir: Path) -> dict[str, Path]:
     """Encuentra reportes HTML generados por Locust."""
     reports = {}
     if not reports_dir.exists():
@@ -68,7 +67,7 @@ def find_html_reports(reports_dir: Path) -> Dict[str, Path]:
     return reports
 
 
-def generate_index_html(html_reports: Dict[str, Path], output_path: str) -> None:
+def generate_index_html(html_reports: dict[str, Path], output_path: str) -> None:
     """Genera índice HTML con links a reportes HTML de Locust."""
     
     html_content = """
