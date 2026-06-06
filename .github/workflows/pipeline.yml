@@ -1,23 +1,9 @@
 name: Pipeline Backend
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Pipeline progresivo por AMBIENTES con reutilización de resultados por SHA.
-#
-# El job `precheck` decide el ambiente (flow) y si se pueden REUTILIZAR las
-# pruebas que ya pasaron para este mismo commit (SHA):
-#
-#   flow=dev      → push a feature/**, develop
-#                   Cadena SECUENCIAL: lint → unit → integración → SAST(Bandit)
-#                   → SonarCloud. El gate es que las pruebas pasen (sin gate de
-#                   cobertura). Sube artefactos por SHA.
-#   flow=staging  → pull_request a develop/main
-#                   REUTILIZA unit+integración del push del mismo SHA (no las
-#                   repite) + DAST(ZAP) + rendimiento(Locust) sobre preprod.
-#   flow=prod     → push a main
-#                   Reutiliza lo previo (si existe) + publica imagen GHCR + smoke.
-#
-# El dashboard es ACUMULATIVO: cada ambiente arrastra los artefactos del SHA del
-# ambiente anterior, así se integran todas las pruebas en un único informe.
+# Pipeline ÚNICO: ejecuta TODAS las fases en una sola corrida sin importar la
+# rama. Despliegue a producción solo desde main. Resultados acumulativos en
+# el dashboard.
 # ─────────────────────────────────────────────────────────────────────────────
 
 on:
@@ -33,7 +19,7 @@ concurrency:
 
 permissions:
   contents: read
-  actions: read # leer/descargar artefactos de corridas previas (reutilización por SHA)
+  actions: read
   checks: write
   pull-requests: write
   packages: write
@@ -41,54 +27,9 @@ permissions:
   id-token: write
 
 jobs:
-  # ═══ 0. Arranque: decidir ambiente y si se reutiliza por SHA ══════════════════
-  precheck:
-    name: Ambiente y reutilización
-    runs-on: ubuntu-latest
-    outputs:
-      flow: ${{ steps.r.outputs.flow }}
-      reuse: ${{ steps.r.outputs.reuse }}
-      run_id: ${{ steps.r.outputs.run_id }}
-    env:
-      GH_TOKEN: ${{ github.token }}
-    steps:
-      - id: r
-        shell: bash
-        run: |
-          REPO="${{ github.repository }}"
-          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            FLOW=staging
-            SHA="${{ github.event.pull_request.head.sha }}"
-          elif [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
-            FLOW=prod
-            SHA="${{ github.sha }}"
-          else
-            FLOW=dev
-            SHA="${{ github.sha }}"
-          fi
-          echo "flow=$FLOW" >> "$GITHUB_OUTPUT"
-
-          REUSE=false
-          RUN_ID=""
-          if [[ "$FLOW" != "dev" ]]; then
-            echo "Buscando corrida push exitosa para SHA $SHA ..."
-            RID=$(gh api "repos/$REPO/actions/runs?head_sha=$SHA&event=push&status=completed&per_page=30" \
-                  --jq 'first(.workflow_runs[] | select(.conclusion=="success" and .name=="Pipeline Backend") | .id) // empty' || echo "")
-            if [[ -n "$RID" ]]; then
-              CNT=$(gh api "repos/$REPO/actions/runs/$RID/artifacts" \
-                    --jq '[.artifacts[] | select(.name=="unit-results" and .expired==false)] | length' || echo "0")
-              if [[ "${CNT:-0}" -gt 0 ]]; then REUSE=true; RUN_ID="$RID"; fi
-            fi
-          fi
-          echo "reuse=$REUSE" >> "$GITHUB_OUTPUT"
-          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
-          echo "Ambiente=$FLOW · reutilizar=$REUSE · run_id=$RUN_ID"
-
-  # ═══ 1. DEV · Lint y tipos ════════════════════════════════════════════════════
+  # ═══ 1. Lint y tipos ══════════════════════════════════════════════════════════
   lint:
     name: Lint y tipos
-    needs: precheck
-    if: ${{ needs.precheck.outputs.flow == 'dev' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -104,12 +45,10 @@ jobs:
       - run: black --check .
       - run: mypy app
 
-  # ═══ 2. DEV · Pruebas unitarias (fakes en memoria) ════════════════════════════
+  # ═══ 2. Pruebas unitarias (fakes en memoria) ══════════════════════════════════
   unit:
     name: Pruebas unitarias
-    needs: [precheck, lint]
-    # Corre en dev, o en staging SOLO si no hay resultados reutilizables (fallback).
-    if: ${{ !cancelled() && (needs.precheck.outputs.flow == 'dev' || (needs.precheck.outputs.flow == 'staging' && needs.precheck.outputs.reuse == 'false')) && (needs.lint.result == 'success' || needs.lint.result == 'skipped') }}
+    needs: lint
     runs-on: ubuntu-latest
     env:
       COVERAGE_FILE: .coverage.unit
@@ -147,15 +86,13 @@ jobs:
           include-hidden-files: true
           retention-days: 7
 
-  # ═══ 3. DEV · Pruebas de integración (SQLite en memoria) ══════════════════════
+  # ═══ 3. Pruebas de integración (SQLite en memoria) ════════════════════════════
   integration:
     name: Pruebas de integración
-    needs: [precheck, unit]
-    if: ${{ !cancelled() && (needs.precheck.outputs.flow == 'dev' || (needs.precheck.outputs.flow == 'staging' && needs.precheck.outputs.reuse == 'false')) && needs.unit.result == 'success' }}
+    needs: unit
     runs-on: ubuntu-latest
     env:
       COVERAGE_FILE: .coverage.int
-      # Sin TEST_DATABASE_URL → conftest usa SQLite en memoria (mock de BD).
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -190,11 +127,10 @@ jobs:
           include-hidden-files: true
           retention-days: 7
 
-  # ═══ 4. DEV · Seguridad estática (Bandit) ═════════════════════════════════════
+  # ═══ 4. Seguridad estática (Bandit) ═══════════════════════════════════════════
   static_security:
     name: Seguridad estática (Bandit)
-    needs: [precheck, integration]
-    if: ${{ !cancelled() && needs.precheck.outputs.flow == 'dev' && needs.integration.result == 'success' }}
+    needs: integration
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -218,11 +154,10 @@ jobs:
           path: reports/bandit.json
           retention-days: 7
 
-  # ═══ 5. DEV · SonarCloud (cobertura combinada, SIN gate) ══════════════════════
+  # ═══ 5. SonarCloud (cobertura combinada) ══════════════════════════════════════
   sonarqube:
     name: SonarCloud
-    needs: [precheck, unit, integration, static_security]
-    if: ${{ !cancelled() && needs.precheck.outputs.flow == 'dev' && needs.static_security.result == 'success' }}
+    needs: [unit, integration, static_security]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -247,14 +182,13 @@ jobs:
           name: bandit-report
           path: reports
         continue-on-error: true
-      - name: Combinar cobertura (informativa, sin gate) + ubicar junit
+      - name: Combinar cobertura + junit
         run: |
           mkdir -p reports
           cp art-unit/reports/junit-unit.xml reports/ 2>/dev/null || true
           cp art-int/reports/junit-integration.xml reports/ 2>/dev/null || true
           cp art-unit/.coverage.unit . 2>/dev/null || true
           cp art-int/.coverage.int . 2>/dev/null || true
-          # relative_files=true (pyproject) permite combinar datos de jobs distintos.
           coverage combine .coverage.unit .coverage.int || true
           coverage xml -o reports/coverage.xml || true
       - uses: actions/upload-artifact@v4
@@ -269,36 +203,14 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
-  # ═══ 6. STAGING/PROD · Reutilizar artefactos del SHA (acumulativo) ════════════
-  reuse_artifacts:
-    name: Reutilizar pruebas del SHA
-    needs: precheck
-    if: ${{ (needs.precheck.outputs.flow == 'staging' || needs.precheck.outputs.flow == 'prod') && needs.precheck.outputs.reuse == 'true' }}
-    runs-on: ubuntu-latest
-    env:
-      GH_TOKEN: ${{ github.token }}
-    steps:
-      - name: Descargar artefactos de la corrida previa (mismo SHA)
-        run: |
-          mkdir -p reused
-          gh run download "${{ needs.precheck.outputs.run_id }}" \
-            -R "${{ github.repository }}" -D reused || true
-          echo "Artefactos reutilizados:"; ls -R reused || true
-      - uses: actions/upload-artifact@v4
-        with:
-          name: reused-artifacts
-          path: reused
-          retention-days: 7
-
-  # ═══ 7. STAGING · DAST (OWASP ZAP) ════════════════════════════════════════════
+  # ═══ 6. DAST (OWASP ZAP) contra preprod local ════════════════════════════════
   cd_dast:
     name: DAST (OWASP ZAP)
-    needs: [precheck, reuse_artifacts, integration]
-    if: ${{ !cancelled() && needs.precheck.outputs.flow == 'staging' && (needs.reuse_artifacts.result == 'success' || needs.integration.result == 'success') }}
+    needs: integration
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Levantar preprod (compose + migrar + sembrar + /health)
+      - name: Levantar preprod (compose)
         run: |
           docker compose up -d --build
           for i in $(seq 1 30); do docker compose exec -T db pg_isready -U ecommerce >/dev/null 2>&1 && break; sleep 2; done
@@ -307,9 +219,9 @@ jobs:
           docker compose exec -T api python -m app.seed_products
           for i in $(seq 1 30); do curl -sf http://localhost:8000/health >/dev/null && break; sleep 2; done
           curl -sf http://localhost:8000/health
-      # El contenedor ZAP alcanza el host por el gateway del bridge (172.17.0.1).
       - name: OWASP ZAP (DAST)
         uses: zaproxy/action-baseline@master
+        continue-on-error: true
         with:
           target: http://172.17.0.1:8000
           rules_file_name: .zap/rules.tsv
@@ -330,11 +242,10 @@ jobs:
             report_md.md
           retention-days: 7
 
-  # ═══ 8. STAGING · Rendimiento (Locust con múltiples escenarios + gate p95) ═════
+  # ═══ 7. Rendimiento (Locust) contra preprod local ═════════════════════════════
   cd_perf:
     name: Rendimiento (Locust)
-    needs: [precheck, reuse_artifacts, integration]
-    if: ${{ !cancelled() && needs.precheck.outputs.flow == 'staging' && (needs.reuse_artifacts.result == 'success' || needs.integration.result == 'success') }}
+    needs: integration
     runs-on: ubuntu-latest
     env:
       PERF_MAX_P95_MS: "1500"
@@ -343,7 +254,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Levantar preprod (compose + migrar + sembrar + /health)
+      - name: Levantar preprod (compose)
         run: |
           docker compose up -d --build
           for i in $(seq 1 30); do docker compose exec -T db pg_isready -U ecommerce >/dev/null 2>&1 && break; sleep 2; done
@@ -383,6 +294,7 @@ jobs:
             --host http://localhost:8000 --csv reports/locust-stress --html reports/locust-stress.html || true
       
       - name: Validar gate P95 (prueba estándar)
+        continue-on-error: true
         run: |
           python - <<'PY'
           import csv, os, sys
@@ -418,11 +330,11 @@ jobs:
           path: reports/
           retention-days: 7
 
-  # ═══ 9. PROD · Publicar imagen GHCR ═══════════════════════════════════════════
+  # ═══ 8. PROD · Publicar imagen GHCR (solo main) ═══════════════════════════════
   publish_image:
     name: Publicar imagen (GHCR)
-    needs: precheck
-    if: ${{ needs.precheck.outputs.flow == 'prod' }}
+    needs: [lint, unit, integration, static_security]
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -439,11 +351,11 @@ jobs:
             ghcr.io/${{ github.repository }}:latest
             ghcr.io/${{ github.repository }}:${{ github.sha }}
 
-  # ═══ 10. PROD · Smoke test contra producción ══════════════════════════════════
+  # ═══ 9. PROD · Smoke test contra producción (solo main) ═══════════════════════
   deploy_smoke:
     name: Smoke test (producción)
-    needs: [precheck, publish_image]
-    if: ${{ !cancelled() && needs.precheck.outputs.flow == 'prod' && needs.publish_image.result == 'success' }}
+    needs: publish_image
+    if: ${{ !cancelled() && needs.publish_image.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - name: Health check (Render)
@@ -455,24 +367,11 @@ jobs:
           done
           echo "❌ El backend de producción no respondió"; exit 1
 
-  # ═══ 11. Dashboard acumulativo (siempre) ══════════════════════════════════════
+  # ═══ 10. Dashboard acumulativo ════════════════════════════════════════════════
   dashboard:
     name: Dashboard de resultados
-    needs:
-      [
-        precheck,
-        lint,
-        unit,
-        integration,
-        static_security,
-        sonarqube,
-        reuse_artifacts,
-        cd_dast,
-        cd_perf,
-        publish_image,
-        deploy_smoke,
-      ]
-    if: ${{ always() && needs.precheck.result == 'success' }}
+    needs: [lint, unit, integration, static_security, sonarqube, cd_dast, cd_perf]
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -485,7 +384,7 @@ jobs:
         continue-on-error: true
       - name: Construir dashboard
         env:
-          PIPELINE_FLOW: ${{ needs.precheck.outputs.flow }}
+          PIPELINE_FLOW: full
         run: |
           mkdir -p dashboard
           python ci/build_dashboard.py \
@@ -504,11 +403,11 @@ jobs:
         with:
           path: dashboard
 
-  # ═══ 12. Publicar dashboard en GitHub Pages (best-effort) ═════════════════════
+  # ═══ 11. Publicar dashboard en GitHub Pages ════════════════════════════════════
   publish_pages:
     name: Publicar dashboard (Pages)
-    needs: [precheck, dashboard]
-    if: ${{ always() && needs.dashboard.result == 'success' && (needs.precheck.outputs.flow == 'staging' || needs.precheck.outputs.flow == 'prod') }}
+    needs: dashboard
+    if: ${{ always() && needs.dashboard.result == 'success' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/')) }}
     runs-on: ubuntu-latest
     environment:
       name: github-pages

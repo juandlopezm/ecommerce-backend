@@ -31,6 +31,12 @@ class Suite:
     def ok(self): return (self.failures + self.errors) == 0
 
 @dataclass
+class FileCov:
+    filename: str
+    line_pct: float
+    branch_pct: float | None = None
+
+@dataclass
 class Report:
     suites: list[Suite] = field(default_factory=list)
     line_pct: float | None = None
@@ -40,6 +46,8 @@ class Report:
     zap: dict[str, int] = field(default_factory=dict)
     perf_p95: float | None = None
     perf_files: list[str] = field(default_factory=list)
+    suites_cov: dict[str, float] = field(default_factory=dict)
+    files_cov: dict[str, list[FileCov]] = field(default_factory=dict)
     notes: list[str] = field(default_factory=list)
 
 
@@ -67,14 +75,35 @@ def parse_junit(root, rep):
         except Exception as e:
             rep.notes.append(f"JUnit: {os.path.basename(path)}: {e}")
 
+_COV_SUITES = {
+    "coverage-unit.xml": "unitarias",
+    "coverage-int.xml": "integracion",
+    "coverage-e2e.xml": "E2E",
+}
+
 def parse_coverage(root, rep):
     for path in _files(root, "coverage*.xml"):
         try:
             node = ET.parse(path).getroot()
             lr = node.get("line-rate"); br = node.get("branch-rate")
-            if lr: rep.line_pct = round(float(lr)*100, 1)
-            if br: rep.branch_pct = round(float(br)*100, 1)
-            rep.cov_source = "Cobertura XML"; return
+            fname = os.path.basename(path)
+            if fname == "coverage.xml" and lr:
+                rep.line_pct = round(float(lr)*100, 1)
+                if br: rep.branch_pct = round(float(br)*100, 1)
+                rep.cov_source = "Cobertura XML"
+            elif lr and fname in _COV_SUITES:
+                rep.suites_cov[_COV_SUITES[fname]] = round(float(lr)*100, 1)
+
+            for pkg in node.iter("package"):
+                for cls in pkg.iter("class"):
+                    fn = cls.get("filename", "")
+                    clr = cls.get("line-rate")
+                    cbr = cls.get("branch-rate")
+                    if fn and clr:
+                        fc = FileCov(filename=fn, line_pct=round(float(clr)*100, 1),
+                                     branch_pct=round(float(cbr)*100, 1) if cbr else None)
+                        key = _COV_SUITES.get(fname, "combinada")
+                        rep.files_cov.setdefault(key, []).append(fc)
         except Exception as e:
             rep.notes.append(f"coverage.xml: {e}")
 
@@ -83,11 +112,32 @@ def parse_lcov(root, rep):
     for path in _files(root, "lcov.info"):
         try:
             found = hit = 0
+            cur_file = ""
+            file_lines = {}
             with open(path, encoding="utf-8", errors="ignore") as fh:
                 for line in fh:
-                    if line.startswith("LF:"): found += int(line.strip().split(":",1)[1] or 0)
-                    elif line.startswith("LH:"): hit += int(line.strip().split(":",1)[1] or 0)
-            if found: rep.line_pct = round(hit/found*100, 1); rep.cov_source = "LCOV"; return
+                    if line.startswith("SF:"):
+                        cur_file = line.strip().split(":",1)[1]
+                    elif line.startswith("DA:"):
+                        pass
+                    elif line.startswith("LF:"):
+                        val = int(line.strip().split(":",1)[1] or 0)
+                        found += val
+                        if cur_file: file_lines[cur_file] = [val, 0]
+                    elif line.startswith("LH:"):
+                        val = int(line.strip().split(":",1)[1] or 0)
+                        hit += val
+                        if cur_file and cur_file in file_lines:
+                            file_lines[cur_file][1] = val
+                    elif line.startswith("end_of_record"):
+                        cur_file = ""
+            if found:
+                rep.line_pct = round(hit/found*100, 1); rep.cov_source = "LCOV"
+                for fn, (total, hits) in file_lines.items():
+                    if total:
+                        rep.files_cov.setdefault("lcov", []).append(
+                            FileCov(filename=fn, line_pct=round(hits/total*100, 1)))
+            return
         except Exception as e:
             rep.notes.append(f"lcov.info: {e}")
 
@@ -175,6 +225,7 @@ ACCENTS = ["#6366f1","#8b5cf6","#10b981","#0ea5e9","#f59e0b","#ef4444"]
 NAV_ITEMS = [
     ("tab-resumen", "📊 Resumen"),
     ("tab-pruebas", "🧪 Pruebas"),
+    ("tab-cobertura", "📁 Cobertura"),
     ("tab-seguridad", "🔒 Seguridad"),
     ("tab-rendimiento", "⚡ Rendimiento"),
 ]
@@ -228,6 +279,20 @@ def render_html(rep: Report) -> str:
       </div>
     </div>"""
 
+    def _cov_card(label, pct, color, sub=""):
+        if pct is None: return ""
+        return f"""
+        <div class="card" style="border-top:3px solid {color};">
+          <div class="card-label">{e(label)}</div>
+          <div class="card-value" style="color:{color};">{pct:.1f}%</div>
+          <div class="card-sub">{e(sub) if sub else 'cobertura líneas'}</div>
+          {_bar(pct, color)}
+        </div>"""
+
+    cov_cards = _cov_card("Cobertura unitarias", rep.suites_cov.get("unitarias"), "#a855f7")
+    cov_cards += _cov_card("Cobertura integración", rep.suites_cov.get("integracion"), "#ec4899")
+    cov_cards += _cov_card("Cobertura E2E", rep.suites_cov.get("E2E"), "#14b8a6")
+
     perf_card = ""
     if rep.perf_p95 is not None:
         perf_color = "#10b981" if rep.perf_p95 <= 1500 else "#ef4444"
@@ -250,8 +315,9 @@ def render_html(rep: Report) -> str:
           rama: <code>{e(ref)}</code> · commit: <code>{e(sha)}</code> · flujo: <code>{e(flow)}</code> · {e(ts)}
         </span>
       </div>
+      {metric_cards}
+      {"<div class='grid-4'>"+cov_cards+"</div>" if cov_cards.strip() else ""}
       <div class="grid-4">
-        {metric_cards}
         {perf_card}
         <div class="card" style="border-top:3px solid #ef4444;">
           <div class="card-label">Seguridad</div>
@@ -262,11 +328,24 @@ def render_html(rep: Report) -> str:
     </div>"""
 
     # ── Pestaña: Pruebas ──────────────────────────────────────────────────
-    def suite_card(s, accent):
+    def suite_card(s, accent, cov_pct):
         seg_pass = f'<div style="flex:{s.passed};background:#10b981;"></div>' if s.passed else ""
         seg_fail = f'<div style="flex:{s.failures+s.errors};background:#ef4444;"></div>' if (s.failures+s.errors) else ""
         seg_skip = f'<div style="flex:{s.skipped};background:#94a3b8;"></div>' if s.skipped else ""
         ok_badge = '<span class="badge pass">pass</span>' if s.ok else '<span class="badge fail">fail</span>'
+        cov_html = ""
+        if cov_pct is not None:
+            cov_color = "#10b981" if cov_pct >= 70 else "#f59e0b" if cov_pct >= 50 else "#ef4444"
+            cov_html = f"""
+          <div style="margin-top:12px;padding-top:10px;border-top:1px solid #334155;">
+            <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px;">
+              <span style="color:#94a3b8;">Cobertura</span>
+              <span style="color:{cov_color};font-weight:600;">{cov_pct}%</span>
+            </div>
+            <div style="height:6px;background:#334155;border-radius:3px;overflow:hidden;">
+              <div style="width:{cov_pct}%;height:100%;background:{cov_color};border-radius:3px;"></div>
+            </div>
+          </div>"""
         return f"""
         <div class="suite-card" style="border-left:3px solid {accent};">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
@@ -282,10 +361,18 @@ def render_html(rep: Report) -> str:
           <div style="display:flex;gap:3px;height:6px;border-radius:3px;overflow:hidden;margin-top:10px;">
             {seg_pass}{seg_fail}{seg_skip}
           </div>
+          {cov_html}
         </div>"""
 
+    def _cov_name(n):
+        nlow = n.lower().strip()
+        if "unitar" in nlow: return "unitarias"
+        if "integra" in nlow: return "integracion"
+        if "e2e" in nlow: return "E2E"
+        return n
+
     suites_html = "\n".join(
-        suite_card(s, ACCENTS[i % len(ACCENTS)])
+        suite_card(s, ACCENTS[i % len(ACCENTS)], rep.suites_cov.get(_cov_name(s.name)))
         for i, s in enumerate(rep.suites)
     ) or "<p style='color:#94a3b8;font-size:13px;'>Sin suites reportadas.</p>"
 
@@ -350,6 +437,53 @@ def render_html(rep: Report) -> str:
     tab_rendimiento = f"""
     <div class="tab-content" id="tab-rendimiento" style="display:none;">
       {perf_content}
+    </div>"""
+
+    # ── Pestaña: Cobertura por archivo ──────────────────────────────────
+    def cov_table(key, title):
+        files = rep.files_cov.get(key)
+        if not files: return ""
+        rows = ""
+        for f in sorted(files, key=lambda x: x.filename):
+            lc = f.line_pct
+            bc = f.branch_pct
+            lcol = "#10b981" if lc >= 70 else "#f59e0b" if lc >= 50 else "#ef4444"
+            rows += f"""
+            <tr>
+              <td style="padding:6px 12px;color:#e2e8f0;font-size:13px;font-family:monospace;">{e(f.filename)}</td>
+              <td style="padding:6px 12px;text-align:right;font-weight:600;color:{lcol};font-size:13px;">{lc:.1f}%</td>
+              <td style="padding:6px 12px;width:160px;">
+                <div style="height:6px;background:#334155;border-radius:3px;overflow:hidden;">
+                  <div style="width:{lc}%;height:100%;background:{lcol};border-radius:3px;"></div>
+                </div>
+              </td>
+              <td style="padding:6px 12px;text-align:right;font-size:13px;color:{'#10b981' if (bc or 0) >= 70 else '#f59e0b' if (bc or 0) >= 50 else '#ef4444' if bc is not None else '#64748b'};">{f'{bc:.1f}%' if bc is not None else '—'}</td>
+            </tr>"""
+        return f"""
+        <div style="margin-bottom:20px;">
+          <div style="font-size:14px;font-weight:500;color:#e2e8f0;margin-bottom:10px;">{e(title)} <span style="font-weight:400;color:#64748b;">({len(files)} archivos)</span></div>
+          <div style="overflow-x:auto;">
+          <table style="width:100%;border-collapse:collapse;background:#1e293b;border-radius:8px;overflow:hidden;">
+            <thead>
+              <tr style="background:#0f172a;">
+                <th style="padding:8px 12px;text-align:left;font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.05em;">Archivo</th>
+                <th style="padding:8px 12px;text-align:right;font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.05em;">Líneas</th>
+                <th style="padding:8px 12px;width:160px;"></th>
+                <th style="padding:8px 12px;text-align:right;font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.05em;">Ramas</th>
+              </tr>
+            </thead>
+            <tbody>{rows}</tbody>
+          </table>
+          </div>
+        </div>"""
+
+    tab_cobertura_parts = ""
+    for key, title in [("unitarias", "Unitarias"), ("integracion", "Integración"), ("E2E", "E2E"), ("combinada", "Combinada"), ("lcov", "LCOV")]:
+        tab_cobertura_parts += cov_table(key, title)
+
+    tab_cobertura = f"""
+    <div class="tab-content" id="tab-cobertura" style="display:none;">
+      {tab_cobertura_parts if tab_cobertura_parts else '<p style="color:#94a3b8;">Sin datos de cobertura por archivo.</p>'}
     </div>"""
 
     # ── Notas ──────────────────────────────────────────────────────────────
@@ -418,6 +552,7 @@ def render_html(rep: Report) -> str:
   <main class="main">
     {tab_resumen}
     {tab_pruebas}
+    {tab_cobertura}
     {tab_seguridad}
     {tab_rendimiento}
     {notes_html}
