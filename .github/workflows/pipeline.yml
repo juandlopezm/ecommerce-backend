@@ -508,7 +508,7 @@ jobs:
   publish_pages:
     name: Publicar dashboard (Pages)
     needs: [precheck, dashboard]
-    if: ${{ always() && needs.dashboard.result == 'success' && github.event_name != 'pull_request' }}
+    if: ${{ always() && needs.dashboard.result == 'success' && (needs.precheck.outputs.flow == 'staging' || needs.precheck.outputs.flow == 'prod') }}
     runs-on: ubuntu-latest
     environment:
       name: github-pages
