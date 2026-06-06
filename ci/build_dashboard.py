@@ -25,6 +25,7 @@ except Exception: pass
 class Suite:
     name: str
     tests: int = 0; failures: int = 0; errors: int = 0; skipped: int = 0; time: float = 0.0
+    source: str = ""
     @property
     def passed(self): return max(self.tests - self.failures - self.errors - self.skipped, 0)
     @property
@@ -77,13 +78,15 @@ def _files(root, *pats):
 def parse_junit(root, rep):
     for path in _files(root, "*junit*.xml", "TEST-*.xml", "report.xml", "*-results.xml"):
         try:
+            src = os.path.basename(path)
             node = ET.parse(path).getroot()
             suites = list(node.iter("testsuite")) if node.tag != "testsuite" else [node]
             for s in suites:
                 t = int(s.get("tests", 0) or 0)
                 if t == 0 and not list(s): continue
                 rep.suites.append(Suite(
-                    name=s.get("name") or os.path.basename(path),
+                    name=s.get("name") or src,
+                    source=src,
                     tests=t, failures=int(s.get("failures", 0) or 0),
                     errors=int(s.get("errors", 0) or 0),
                     skipped=int(s.get("skipped", 0) or 0),
@@ -293,6 +296,24 @@ def render_html(rep: Report) -> str:
     lp  = rep.line_pct or 0
     bp  = rep.branch_pct or 0
 
+    def _type_card(label, suites, color):
+        t = sum(s.tests for s in suites)
+        f = sum(s.failures + s.errors for s in suites)
+        p = t - f - sum(s.skipped for s in suites)
+        if t == 0: return ""
+        ok = f == 0
+        return f"""
+        <div class="card" style="border-top:3px solid {color};">
+          <div class="card-label">{e(label)}</div>
+          <div class="card-value" style="color:{'#10b981' if ok else '#ef4444'};">{p}/{t}</div>
+          <div class="card-sub">{f} fallos · {sum(s.time for s in suites):.1f}s</div>
+          {_bar(p/t*100 if t else 0, "#10b981" if ok else "#ef4444")}
+        </div>"""
+
+    unit_suites = [s for s in rep.suites if "unitar" in s.name.lower() or "unitar" in s.source.lower()]
+    int_suites  = [s for s in rep.suites if "integra" in s.name.lower() or "integra" in s.source.lower()]
+    e2e_suites  = [s for s in rep.suites if "e2e" in s.name.lower() or "e2e" in s.source.lower() or "playwright" in s.name.lower()]
+
     metric_cards = f"""
     <div class="grid-4">
       <div class="card" style="border-top:3px solid #10b981;">
@@ -316,9 +337,13 @@ def render_html(rep: Report) -> str:
       <div class="card" style="border-top:3px solid #f59e0b;">
         <div class="card-label">Tiempo total</div>
         <div class="card-value" style="color:#f59e0b;">{total_time}s</div>
-        <div class="card-sub">suites de prueba</div>
+        <div class="card-sub">{len(rep.suites)} suites</div>
       </div>
     </div>"""
+
+    type_cards = _type_card("Unitarias", unit_suites, "#6366f1")
+    type_cards += _type_card("Integración", int_suites, "#8b5cf6")
+    type_cards += _type_card("E2E", e2e_suites, "#14b8a6")
 
     def _cov_card(label, pct, color, sub=""):
         if pct is None: return ""
@@ -357,6 +382,7 @@ def render_html(rep: Report) -> str:
         </span>
       </div>
       {metric_cards}
+      {"<div class='grid-4'>"+type_cards+"</div>" if type_cards.strip() else ""}
       {"<div class='grid-4'>"+cov_cards+"</div>" if cov_cards.strip() else ""}
       <div class="grid-4">
         {perf_card}
