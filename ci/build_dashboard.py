@@ -10,7 +10,7 @@ Uso:
 Sin dependencias externas (solo stdlib).
 """
 from __future__ import annotations
-import argparse, csv, glob, html, json, os, sys, xml.etree.ElementTree as ET
+import argparse, csv, glob, html, json, os, shutil, sys, xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
@@ -39,6 +39,7 @@ class Report:
     bandit: dict[str, int] = field(default_factory=dict)
     zap: dict[str, int] = field(default_factory=dict)
     perf_p95: float | None = None
+    perf_files: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 
 
@@ -141,6 +142,34 @@ def collect(input_dir):
     return rep
 
 
+# ── Copiar reportes HTML de rendimiento ─────────────────────────────────────
+def copy_perf_reports(input_dir: str, output_dir: str, rep: Report) -> None:
+    """Busca reportes HTML de Locust en el directorio de entrada y los copia al dashboard."""
+    perf_dirs = []
+    for entry in os.listdir(input_dir):
+        full = os.path.join(input_dir, entry)
+        if os.path.isdir(full) and (entry == "cd-perf" or entry.startswith("perf")):
+            perf_dirs.append(full)
+    if not perf_dirs:
+        rep.notes.append("Sin reportes de rendimiento para copiar")
+        return
+
+    perf_out = os.path.join(output_dir, "perf")
+    os.makedirs(perf_out, exist_ok=True)
+
+    html_files = []
+    for perf_dir in perf_dirs:
+        for html_path in _files(perf_dir, "*.html", "*.csv"):
+            dst = os.path.join(perf_out, os.path.basename(html_path))
+            shutil.copy2(html_path, dst)
+            fname = os.path.basename(html_path)
+            if fname.endswith(".html"):
+                html_files.append(fname)
+
+    rep.perf_files = sorted(set(html_files))
+    rep.notes.append(f"Reportes HTML de rendimiento copiados ({len(rep.perf_files)} archivos)")
+
+
 # ── HTML ──────────────────────────────────────────────────────────────────────
 def _bar(pct, color, gate=None):
     gate_line = f"left:{gate}%;background:#B4B2A9;width:2px;height:100%;position:absolute;top:0;" if gate else ""
@@ -179,7 +208,7 @@ def render_html(rep: Report) -> str:
     # ── Tarjetas de métricas ─────────────────────────────────────────────────
     lp = rep.line_pct or 0
     bp = rep.branch_pct or 0
-    lc = "#185FA5"  # informativo: la cobertura ya no es gate
+    lc = "#185FA5"
     bc = "#534AB7"
     total_time = round(sum(s.time for s in rep.suites), 1)
 
@@ -268,6 +297,34 @@ def render_html(rep: Report) -> str:
     bandit_html = sec_rows(rep.bandit, ["HIGH","MEDIUM","LOW"]) or '<div style="font-size:13px;color:#94a3b8;">Sin hallazgos</div>'
     zap_html    = sec_rows(rep.zap, ["HIGH","MEDIUM","LOW","INFO"]) if rep.zap else '<div style="font-size:13px;color:#94a3b8;">Solo flujo CD</div>'
 
+    # ── Reportes de rendimiento ──────────────────────────────────────────────
+    perf_html = ""
+    if rep.perf_files:
+        test_labels = {
+            "locust-standard": ("Rendimiento Estándar", "100 visitantes navegando catálogo"),
+            "locust-checkout": ("Checkout", "20 compradores realizando compras"),
+            "locust-admin": ("Admin CRUD", "15 administradores creando/editando"),
+            "locust-stress": ("Estrés Combinado", "200 usuarios de todos los tipos"),
+        }
+        cards = ""
+        for fname in rep.perf_files:
+            base = fname.replace(".html", "")
+            info = test_labels.get(base, (base.replace("locust-", "").replace("-", " ").title(), ""))
+            cards += f"""
+            <a href="perf/{fname}" style="text-decoration:none;display:block;">
+              <div style="background:#fff;border:0.5px solid #e2e8f0;border-radius:12px;padding:1rem 1.25rem;border-left:3px solid #0F6E56;transition:transform .15s;cursor:pointer;">
+                <div style="font-size:13px;font-weight:500;color:#1e293b;">{e(info[0])}</div>
+                <div style="font-size:11px;color:#64748b;margin-top:2px;">{e(info[1])}</div>
+                <div style="font-size:11px;color:#0F6E56;margin-top:6px;">📈 Ver reporte →</div>
+              </div>
+            </a>"""
+        if cards:
+            perf_html = f"""
+            <div class="sec-title">reportes de rendimiento</div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-bottom:16px;">
+              {cards}
+            </div>"""
+
     notes_html = f'<p style="color:#94a3b8;font-size:11px;margin-top:16px;">{" · ".join(e(n) for n in rep.notes)}</p>' if rep.notes else ""
 
     return f"""<!DOCTYPE html>
@@ -299,6 +356,8 @@ def render_html(rep: Report) -> str:
 <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:16px;">
 {suites_html}
 </div>
+
+{perf_html}
 
 <div class="sec-title">seguridad y calidad</div>
 <div class="security-grid">
@@ -343,6 +402,9 @@ def render_markdown(rep: Report) -> str:
         lines.append(f"| {s.name} | {ok(s.ok)} | {s.passed}/{s.tests} en {s.time:.1f}s |")
     if rep.perf_p95 is not None:
         lines.append(f"| Rendimiento p95     | {ok(rep.perf_p95<=1500)} | {int(rep.perf_p95)} ms |")
+    if rep.perf_files:
+        links = ", ".join(f"[{f}](perf/{f})" for f in rep.perf_files)
+        lines.append(f"| Reportes rendimiento | 📊 | {links} |")
     return "\n".join(lines) + "\n"
 
 
@@ -356,7 +418,12 @@ def main():
 
     rep = collect(args.input)
 
-    os.makedirs(os.path.dirname(args.html_out) or ".", exist_ok=True)
+    html_dir = os.path.dirname(args.html_out) or "."
+    os.makedirs(html_dir, exist_ok=True)
+
+    # Copiar reportes HTML de rendimiento al dashboard
+    copy_perf_reports(args.input, html_dir, rep)
+
     with open(args.html_out, "w", encoding="utf-8") as f: f.write(render_html(rep))
     with open(args.md_out,   "w", encoding="utf-8") as f: f.write(render_markdown(rep))
 
